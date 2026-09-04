@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/upload-to-pinata.js": {
+      "maxDuration": 30
+    }
+  }
+}

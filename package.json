@@ -1,0 +1,32 @@
+{
+  "name": "cbs-nft-builder",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3",
+    "vite": "^8.0.12",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
+    "@metaplex-foundation/mpl-toolbox": "^0.11.4",
+    "@metaplex-foundation/umi": "^1.5.1",
+    "@metaplex-foundation/umi-bundle-defaults": "^1.5.1",
+    "@metaplex-foundation/umi-signer-wallet-adapters": "^1.5.1",
+    "@solana/web3.js": "^1.98.4",
+    "@wallet-standard/app": "^1.1.0",
+    "@wallet-standard/ui": "^1.0.1",
+    "bs58": "^6.0.0",
+    "buffer": "^6.0.3",
+    "tweetnacl": "^1.0.3"
+  }
+}
