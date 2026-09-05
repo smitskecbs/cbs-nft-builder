@@ -17,6 +17,7 @@ import type { ResolvedDraftMetadata } from '../studio/resolve';
 import type { ManagerListItem } from '../studio/resume';
 import { COLLECTION_INDEXING_WAIT_LABEL } from '../studio/resume';
 import { COLLECTION_ITEM_DISCOVERY_FAILURE_MESSAGE } from '../solana/discoverCollectionItems';
+import { renderCollectionMintButtonMarkup } from './mintProgressView';
 
 export function renderCollectionPreviewMarkup(model: {
   name: string;
@@ -300,6 +301,7 @@ export function renderDraftListMarkup(
     collectionCreated?: boolean;
     digitCount?: number;
     artworkPreviewUrls?: ReadonlyMap<string, string>;
+    mintInProgress?: boolean;
   } = {}
 ): string {
   if (drafts.length === 0) {
@@ -348,7 +350,11 @@ export function renderDraftListMarkup(
         const minted = Boolean(draft.mintAddress);
         const verified = draft.status === 'collection_verified';
         const mintButton = canMintStudioDraft(draft)
-          ? `<button type="button" class="primary-btn" data-draft-action="mint" data-draft-id="${escapeHtml(draft.id)}">Mint ${escapeHtml(numberLabel)}</button>`
+          ? renderCollectionMintButtonMarkup(
+              draft.id,
+              `Mint ${numberLabel}`,
+              options.mintInProgress === true
+            )
           : '';
         const mintAddress = draft.mintAddress
           ? `<span>Mint address: ${escapeHtml(draft.mintAddress)}</span>`
@@ -387,6 +393,7 @@ export function renderManagerItemListMarkup(
     digitCount?: number;
     network?: SolanaNetwork;
     numberingBlocked?: boolean;
+    mintInProgress?: boolean;
   } = {}
 ): string {
   if (items.length === 0) {
@@ -446,7 +453,11 @@ export function renderManagerItemListMarkup(
       );
       const mintButton =
         canMint && draft
-          ? `<button type="button" class="primary-btn" data-draft-action="mint" data-draft-id="${escapeHtml(draft.id)}">Mint ${escapeHtml(numberLabel || draft.name)}</button>`
+          ? renderCollectionMintButtonMarkup(
+              draft.id,
+              `Mint ${numberLabel || draft.name}`,
+              options.mintInProgress === true
+            )
           : '';
       const editButton = canEdit && draft
         ? `<button type="button" class="secondary-btn" data-draft-action="edit" data-draft-id="${escapeHtml(draft.id)}">Edit</button>`

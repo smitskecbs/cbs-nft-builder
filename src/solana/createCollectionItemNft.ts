@@ -7,7 +7,7 @@ import {
 import { generateSigner, percentAmount, publicKey } from '@metaplex-foundation/umi';
 
 import { createNftUmi } from './umi';
-import { sendMintBuilder } from './sendMintBuilder';
+import { sendMintBuilder, type MintSendProgressStage } from './sendMintBuilder';
 import type { SolanaNetwork } from './config';
 import type { SolanaWalletProvider } from './wallets';
 
@@ -21,6 +21,7 @@ export type CreateCollectionItemNftParams = {
   royaltyPercent: number;
   creatorAddress: string;
   isMutable: boolean;
+  onSendProgress?: (stage: MintSendProgressStage) => void;
 };
 
 export async function createCollectionItemNft(params: CreateCollectionItemNftParams) {
@@ -56,7 +57,12 @@ export async function createCollectionItemNft(params: CreateCollectionItemNftPar
   });
 
   const builder = createBuilder.add(verifyBuilder);
-  const sent = await sendMintBuilder({ umi, builder, mintAddress });
+  const sent = await sendMintBuilder({
+    umi,
+    builder,
+    mintAddress,
+    onSendProgress: params.onSendProgress,
+  });
 
   return {
     ...sent,

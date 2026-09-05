@@ -388,6 +388,30 @@ describe('recover unproven local mint drafts', () => {
     expect(html).toContain('Mint #023');
     expect(canMintStudioDraft(prepared023)).toBe(true);
   });
+
+  it('disables a prepared Mint button while a mint is in progress', () => {
+    const prepared023 = draft({
+      id: 'draft-023',
+      number: 23,
+      name: 'ManGo Pixel #023',
+      status: 'metadata_ready',
+      overrides: {},
+    });
+    const html = renderManagerItemListMarkup(
+      mergeManagerListItems({
+        discovered: discovery().items,
+        drafts: [prepared023],
+      }),
+      { digitCount: 3, network: 'mainnet', mintInProgress: true }
+    );
+
+    expect(html).toContain('Minting...');
+    expect(html).toContain('disabled');
+    expect(html).toContain('aria-busy="true"');
+    expect(html).toContain('data-mint-idle-label="Mint #023"');
+    expect(html).not.toContain('>Mint #023<');
+    expect(canMintStudioDraft(prepared023)).toBe(true);
+  });
 });
 
 /**
@@ -714,6 +738,37 @@ describe('recover stale local mint proof against collection discovery', () => {
     expect(html).toContain('>View<');
     expect(html).not.toContain('Mint #025');
     expect(html).not.toContain(COLLECTION_INDEXING_WAIT_LABEL);
+  });
+
+  it('does not show Mint on a DAS Verified item even while another mint is in progress', () => {
+    const minted025 = normalizeStudioDraft(
+      draft({
+        id: 'draft-025',
+        number: 25,
+        name: 'ManGo Pixel #025',
+        status: 'mint_submitted',
+        mintAddress: 'Real025Mint111111111111111111111111111111',
+        mintSignature: '5sig',
+      })
+    );
+    const items = [
+      ...discovery().items,
+      discovered('ManGo Pixel #025', 'Real025Mint111111111111111111111111111111', 25),
+    ];
+    const html = renderManagerItemListMarkup(
+      mergeManagerListItems({
+        discovered: items,
+        drafts: [minted025],
+        discoveryOk: true,
+        mintAccountPresence: () => 'exists',
+      }),
+      { digitCount: 3, network: 'mainnet', mintInProgress: true }
+    );
+
+    expect(html).toContain('Verified');
+    expect(html).toContain('>View<');
+    expect(html).not.toContain('data-draft-action="mint"');
+    expect(html).not.toContain('Mint #025');
   });
 
   it('treats account-not-found lookup errors as missing mints', () => {

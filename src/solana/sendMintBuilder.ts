@@ -2,10 +2,13 @@ import type { Context, TransactionBuilder } from '@metaplex-foundation/umi';
 
 import { logMintPipelineFlags, resolveMintOutcome } from './mintResult';
 
+export type MintSendProgressStage = 'awaiting_wallet' | 'confirming';
+
 export async function sendMintBuilder(params: {
   umi: Pick<Context, 'transactions' | 'rpc' | 'payer'>;
   builder: TransactionBuilder;
   mintAddress: string;
+  onSendProgress?: (stage: MintSendProgressStage) => void;
 }): Promise<{
   mintAddress: string;
   signature: string;
@@ -17,6 +20,7 @@ export async function sendMintBuilder(params: {
   let confirmSucceeded = false;
 
   try {
+    params.onSendProgress?.('awaiting_wallet');
     signatureRaw = await params.builder.send(params.umi);
     sendSucceeded = true;
   } catch (error) {
@@ -30,6 +34,7 @@ export async function sendMintBuilder(params: {
   }
 
   try {
+    params.onSendProgress?.('confirming');
     await params.builder.confirm(params.umi, signatureRaw as never, {
       commitment: 'confirmed',
     });

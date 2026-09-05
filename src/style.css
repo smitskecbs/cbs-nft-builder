@@ -1209,6 +1209,116 @@ select:focus-visible,
   color: var(--muted);
 }
 
+.mint-progress-overlay .mint-progress-card {
+  width: min(420px, 100%);
+  text-align: left;
+}
+
+.mint-progress {
+  display: grid;
+  gap: 10px;
+}
+
+.mint-progress-headline {
+  margin: 0;
+  font-weight: 800;
+  font-size: 1.05rem;
+}
+
+.mint-progress-detail {
+  margin: 0;
+  color: var(--muted);
+}
+
+.mint-progress-bar {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+.mint-progress-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
+.mint-progress-count {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.mint-progress-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.mint-progress-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.mint-progress-step-mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line-strong);
+  flex: 0 0 auto;
+}
+
+.mint-progress-step.is-complete {
+  color: var(--cream);
+}
+
+.mint-progress-step.is-complete .mint-progress-step-mark {
+  background: #6fbf73;
+}
+
+.mint-progress-step.is-current {
+  color: var(--cream);
+  font-weight: 800;
+}
+
+.mint-progress-step.is-current .mint-progress-step-mark {
+  background: var(--accent);
+  animation: mint-progress-pulse 1.1s ease-in-out infinite;
+}
+
+.mint-progress-step.is-failed {
+  color: #f0a3a3;
+  font-weight: 800;
+}
+
+.mint-progress-step.is-failed .mint-progress-step-mark {
+  background: #d46565;
+}
+
+.mint-progress-close {
+  justify-self: start;
+  margin-top: 4px;
+}
+
+@keyframes mint-progress-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.72);
+  }
+}
+
 .marketplace-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

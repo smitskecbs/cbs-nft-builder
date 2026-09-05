@@ -16,6 +16,22 @@ export function isLocalUploadServiceUnavailableError(error: unknown): boolean {
   );
 }
 
+export function isWalletRequestCancelled(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : String(error ?? '');
+  const lower = message.toLowerCase();
+
+  return (
+    lower.includes('user rejected') ||
+    lower.includes('user declined') ||
+    lower.includes('rejected the request') ||
+    lower.includes('request rejected') ||
+    lower.includes('cancelled') ||
+    lower.includes('canceled') ||
+    lower.includes('4001')
+  );
+}
+
 export function mapErrorToUserMessage(
   error: unknown,
   options: { mintTransactionSubmitted?: boolean } = {}
@@ -30,15 +46,7 @@ export function mapErrorToUserMessage(
       : LOCAL_UPLOAD_SERVICE_UNAVAILABLE_BEFORE_MINT_MESSAGE;
   }
 
-  if (
-    lower.includes('user rejected') ||
-    lower.includes('user declined') ||
-    lower.includes('rejected the request') ||
-    lower.includes('request rejected') ||
-    lower.includes('cancelled') ||
-    lower.includes('canceled') ||
-    lower.includes('4001')
-  ) {
+  if (isWalletRequestCancelled(error)) {
     return 'Wallet request was cancelled.';
   }
 

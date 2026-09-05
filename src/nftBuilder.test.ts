@@ -28,7 +28,7 @@ import {
   DONATION_WALLET_SHORT,
   shortenDonationAddress,
 } from './support/donation';
-import { mapErrorToUserMessage } from './validation/errors';
+import { isWalletRequestCancelled, mapErrorToUserMessage } from './validation/errors';
 import { renderMintResultMarkup } from './ui/mintResultView';
 import {
   INDEXING_NOTICE,
@@ -470,6 +470,14 @@ describe('post-mint result', () => {
       'Artwork upload failed because the local upload service became unavailable. Please restart the NFT Builder and try again.'
     );
     expect(mapErrorToUserMessage(new Error('Failed to fetch'))).toBe('Failed to fetch');
+  });
+
+  it('maps wallet rejection to cancelled without claiming success', () => {
+    expect(isWalletRequestCancelled(new Error('User rejected the request'))).toBe(true);
+    expect(mapErrorToUserMessage(new Error('User rejected the request'))).toBe(
+      'Wallet request was cancelled.'
+    );
+    expect(isWalletRequestCancelled(new Error('simulation failed'))).toBe(false);
   });
 
   it('does not create another NFT when replaying a stored result', () => {

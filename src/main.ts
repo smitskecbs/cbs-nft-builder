@@ -10,6 +10,10 @@ import {
 } from './ui/networkPreference';
 import { renderPreviewMarkup } from './ui/preview';
 import { hideActionPopup, showActionPopup } from './ui/popup';
+import {
+  applyMintingButtonState,
+  showMintProgressOverlay,
+} from './ui/mintProgressView';
 import { escapeHtml, shortAddress } from './ui/html';
 import {
   MAINNET_RPC_NOT_CONFIGURED_MESSAGE,
@@ -96,7 +100,7 @@ import {
 import { buildNftMetadata } from './metadata/buildNftMetadata';
 import { validateUniqueNftForm } from './validation/nftForm';
 import { normalizeAttributes } from './validation/attributes';
-import { mapErrorToUserMessage } from './validation/errors';
+import { isWalletRequestCancelled, mapErrorToUserMessage } from './validation/errors';
 import {
   requestPinataUploadAuthorization,
   uploadFileToPinata,
@@ -106,6 +110,12 @@ import { copyDonationAddress } from './support/donation';
 import { studioCapacityView } from './studio/capacity';
 import { defaultStudioDefaults } from './studio/defaults';
 import { buildSavedCollectionItemDraft, shouldAutoSaveBeforeMint } from './studio/saveItemDraft';
+import {
+  dasConfirmedCollectionItem,
+  idleMintProgress,
+  reduceMintProgress,
+  type MintProgressEvent,
+} from './studio/mintProgress';
 import {
   applyDraftEditorValues,
   inheritedDraftName,
@@ -287,7 +297,27 @@ let connectedWalletAddress = '';
 let selectedWalletId = '';
 let artworkObjectUrl: string | null = null;
 let isBusy = false;
+let collectionMintProgress = idleMintProgress();
 let lastMintDisplay: MintDisplayModel | null = null;
+
+function setBusy(next: boolean): void {
+  isBusy = next;
+  applyMintingButtonState(document, next);
+}
+
+function publishCollectionMintProgress(event: MintProgressEvent): void {
+  collectionMintProgress = reduceMintProgress(collectionMintProgress, event);
+  showMintProgressOverlay(collectionMintProgress);
+}
+
+function failCollectionMintProgress(error: unknown, submitted = false): string {
+  const message = mapErrorToUserMessage(error, { mintTransactionSubmitted: submitted });
+  publishCollectionMintProgress({
+    type: isWalletRequestCancelled(error) ? 'cancel' : 'fail',
+    error: message,
+  });
+  return message;
+}
 type BuilderMode = 'home' | 'nft' | 'create-collection' | 'manage-collection';
 
 let builderMode: BuilderMode = 'home';
@@ -1174,15 +1204,11 @@ async function handleDraftAction(action: string, draftId: string, pending: boole
     }
 
     if (shouldAutoSaveBeforeMint(editingDraftIdInput.value, draftId)) {
-      const saved = await saveCurrentItemDraft({ announce: false, render: false });
-      if (!saved.ok) {
-        return;
-      }
-      await mintCollectionDraftById(saved.draft.id);
+      await runCollectionItemMint({ autoSave: true, draftId });
       return;
     }
 
-    await mintCollectionDraftById(draftId);
+    await runCollectionItemMint({ autoSave: false, draftId });
     return;
   }
 
@@ -1536,6 +1562,7 @@ async function renderCollectionManager(): Promise<void> {
     digitCount: numbering.digitCount,
     network: activeCollection.network,
     numberingBlocked: progress.numberingBlocked,
+    mintInProgress: isBusy,
   });
   const addNftDraftButton = requireElement<HTMLButtonElement>('#addNftDraftButton');
   studioDraftList.appendChild(addNftDraftButton);
@@ -1881,7 +1908,7 @@ nftForm.addEventListener('submit', async (event) => {
     return;
   }
 
-  isBusy = true;
+  setBusy(true);
   resultPanel.hidden = true;
 
   try {
@@ -1961,7 +1988,7 @@ nftForm.addEventListener('submit', async (event) => {
     showActionPopup('NFT creation failed', message, 'error');
     hideActionPopup(2200);
   } finally {
-    isBusy = false;
+    setBusy(false);
   }
 });
 
@@ -2107,7 +2134,7 @@ collectionForm.addEventListener('submit', async (event) => {
     return;
   }
 
-  isBusy = true;
+  setBusy(true);
   resultPanel.hidden = true;
 
   try {
@@ -2230,7 +2257,7 @@ collectionForm.addEventListener('submit', async (event) => {
     showActionPopup('Collection creation failed', message, 'error');
     hideActionPopup(2200);
   } finally {
-    isBusy = false;
+    setBusy(false);
   }
 });
 
@@ -2323,10 +2350,11 @@ bindDropzone(studioDraftDropzone, studioArtworkInput, false);
 async function saveCurrentItemDraft(options: {
   announce?: boolean;
   render?: boolean;
-} = {}): Promise<{ ok: true; draft: StudioDraft } | { ok: false }> {
+} = {}): Promise<{ ok: true; draft: StudioDraft } | { ok: false; error: string }> {
   if (!activeCollection) {
-    setError('Open a collection before saving a draft.');
-    return { ok: false };
+    const error = 'Open a collection before saving a draft.';
+    setError(error);
+    return { ok: false, error };
   }
 
   const numbering = numberingFromCollection(activeCollection);
@@ -2334,7 +2362,7 @@ async function saveCurrentItemDraft(options: {
 
   if (!numberingCheck.ok) {
     setError(numberingCheck.error);
-    return { ok: false };
+    return { ok: false, error: numberingCheck.error };
   }
 
   const file = collectionItemArtworkInput.files?.[0] ?? null;
@@ -2343,8 +2371,9 @@ async function saveCurrentItemDraft(options: {
     : null;
 
   if (file && !artwork) {
-    setError(classifyArtworkFiles([file]).rejected[0]?.error ?? 'Artwork is not supported.');
-    return { ok: false };
+    const error = classifyArtworkFiles([file]).rejected[0]?.error ?? 'Artwork is not supported.';
+    setError(error);
+    return { ok: false, error };
   }
 
   const name = requireElement<HTMLInputElement>('#collectionItemName').value.trim();
@@ -2356,7 +2385,7 @@ async function saveCurrentItemDraft(options: {
 
   if (!attributes.ok) {
     setError(attributes.error);
-    return { ok: false };
+    return { ok: false, error: attributes.error };
   }
 
   const saved = buildSavedCollectionItemDraft({
@@ -2375,7 +2404,7 @@ async function saveCurrentItemDraft(options: {
 
   if (!saved.ok) {
     setError(saved.error);
-    return { ok: false };
+    return { ok: false, error: saved.error };
   }
 
   if (!saved.unchanged) {
@@ -2397,30 +2426,88 @@ async function saveCurrentItemDraft(options: {
   return { ok: true, draft: persisted };
 }
 
-async function mintCurrentItemForm(): Promise<void> {
-  const saved = await saveCurrentItemDraft({ announce: false, render: false });
-  if (!saved.ok) {
+function abortCollectionItemMint(message: string): void {
+  setError(message);
+  publishCollectionMintProgress({ type: 'fail', error: message });
+}
+
+function publishPostMintDasProgress(mintAddress: string): void {
+  if (
+    lastItemDiscovery?.ok &&
+    dasConfirmedCollectionItem(lastItemDiscovery.items, mintAddress)
+  ) {
+    publishCollectionMintProgress({ type: 'completeVerified' });
     return;
   }
 
-  await mintCollectionDraftById(saved.draft.id);
+  publishCollectionMintProgress({ type: 'indexing' });
 }
 
-async function mintCollectionDraftById(draftId: string): Promise<void> {
+async function mintCurrentItemForm(): Promise<void> {
+  await runCollectionItemMint({ autoSave: true, draftId: null });
+}
+
+async function runCollectionItemMint(params: {
+  autoSave: boolean;
+  draftId: string | null;
+}): Promise<void> {
   if (isBusy || !activeCollection) {
     return;
   }
 
-  isBusy = true;
+  setBusy(true);
+  hideActionPopup();
+  publishCollectionMintProgress({
+    type: 'start',
+    includeSaving: params.autoSave,
+  });
+
+  try {
+    let draftId = params.draftId;
+
+    if (params.autoSave) {
+      const saved = await saveCurrentItemDraft({ announce: false, render: false });
+      if (!saved.ok) {
+        abortCollectionItemMint(saved.error);
+        return;
+      }
+      draftId = saved.draft.id;
+    }
+
+    if (!draftId) {
+      abortCollectionItemMint('That prepared item was not found.');
+      return;
+    }
+
+    await mintCollectionDraftById(draftId);
+  } catch (error) {
+    console.error(error);
+    const message = failCollectionMintProgress(error);
+    setError(message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function mintCollectionDraftById(draftId: string): Promise<void> {
+  if (!activeCollection) {
+    abortCollectionItemMint('Open a collection before minting.');
+    return;
+  }
+
   let chainMintAddress: string | null = null;
   let workingDraft: StudioDraft | null = null;
 
   try {
+    if (collectionMintProgress.phase === 'saving') {
+      publishCollectionMintProgress({ type: 'stage', stage: 'preparing' });
+    }
+
     await loadStudioDraftsForActiveCollection();
     const draft = studioDrafts.find((item) => item.id === draftId);
 
     if (!draft) {
-      setError('That prepared item was not found.');
+      abortCollectionItemMint('That prepared item was not found.');
       return;
     }
 
@@ -2432,19 +2519,19 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
     );
 
     if (!networkCheck.ok) {
-      setError(networkCheck.error);
+      abortCollectionItemMint(networkCheck.error);
       return;
     }
 
     if (!lastOnChainView?.isCollection || lastOnChainView.mint !== activeCollection.mint) {
-      setError(
+      abortCollectionItemMint(
         'Confirm this collection on-chain before minting. No new collection will be created.'
       );
       return;
     }
 
     if (!lastItemDiscovery?.ok) {
-      setError(lastItemDiscovery?.error ?? COLLECTION_ITEM_DISCOVERY_FAILURE_MESSAGE);
+      abortCollectionItemMint(lastItemDiscovery?.error ?? COLLECTION_ITEM_DISCOVERY_FAILURE_MESSAGE);
       return;
     }
 
@@ -2454,7 +2541,7 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
       } catch {
         // Local mint address is enough to refuse a second mint.
       }
-      setError('This item already has a mint address. It will not be minted again.');
+      abortCollectionItemMint('This item already has a mint address. It will not be minted again.');
       return;
     }
 
@@ -2463,27 +2550,27 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
     const prepared = prepareItemMintFromDraft(draft, defaults, numbering);
 
     if ('error' in prepared) {
-      setError(prepared.error);
+      abortCollectionItemMint(prepared.error);
       return;
     }
 
     const target = assertMintTargetsDraft(prepared, draft);
 
     if (!target.ok) {
-      setError(target.error);
+      abortCollectionItemMint(target.error);
       return;
     }
 
     const otherDraft = studioDrafts.find((item) => item.id !== draft.id);
     if (otherDraft && prepared.draftId === otherDraft.id) {
-      setError(`${prepared.mintLabel} cannot mint ${otherDraft.name}.`);
+      abortCollectionItemMint(`${prepared.mintLabel} cannot mint ${otherDraft.name}.`);
       return;
     }
 
     const cap = canAddCollectionItem(activeCollection.items.length, numbering.plannedCapacity);
 
     if (!cap.ok) {
-      setError(cap.error);
+      abortCollectionItemMint(cap.error);
       return;
     }
 
@@ -2500,14 +2587,16 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
     );
 
     if (!numberCheck.ok) {
-      setError(numberCheck.error);
+      abortCollectionItemMint(numberCheck.error);
       return;
     }
 
     const blob = await studioStore.getBlob(draft.id);
 
     if (!blob || !prepared.artwork) {
-      setError(`Add artwork to ${prepared.mintLabel.replace(/^Mint /, '')} before minting.`);
+      abortCollectionItemMint(
+        `Add artwork to ${prepared.mintLabel.replace(/^Mint /, '')} before minting.`
+      );
       return;
     }
 
@@ -2531,7 +2620,7 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
     });
 
     if (!validated.ok) {
-      setError(validated.error);
+      abortCollectionItemMint(validated.error);
       return;
     }
 
@@ -2540,12 +2629,13 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
     editingDraftIdInput.value = draft.id;
 
     const ready = await ensureReadyToMint();
+    publishCollectionMintProgress({ type: 'stage', stage: 'authorizingUpload' });
     const uploadAuth = await requestPinataUploadAuthorization(
       ready.wallet,
       ready.address,
       ready.walletId
     );
-    showActionPopup('Uploading artwork', `Uploading ${prepared.name} artwork to IPFS...`, 'loading');
+    publishCollectionMintProgress({ type: 'stage', stage: 'uploadingArtwork' });
     const uploadedArtwork = await uploadFileToPinata(artworkFile, uploadAuth);
     const metadata = buildNftMetadata({
       name: validated.value.name,
@@ -2557,13 +2647,8 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
       attributes: validated.value.attributes,
       creatorAddress: ready.address,
     });
-    showActionPopup('Uploading metadata', `Uploading ${prepared.name} metadata to IPFS...`, 'loading');
+    publishCollectionMintProgress({ type: 'stage', stage: 'uploadingMetadata' });
     const uploadedMetadata = await uploadNftMetadataToPinata(metadata, uploadAuth);
-    showActionPopup(
-      'Confirm mint',
-      `Your wallet will mint ${prepared.name} into this collection and verify it.`,
-      'loading'
-    );
     workingDraft = draft;
     const minted = await createCollectionItemNft({
       network: ready.network,
@@ -2575,6 +2660,12 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
       royaltyPercent: validated.value.royaltyPercent,
       creatorAddress: ready.address,
       isMutable: validated.value.isMutable,
+      onSendProgress: (stage) => {
+        publishCollectionMintProgress({
+          type: 'stage',
+          stage: stage === 'awaiting_wallet' ? 'awaitingWallet' : 'confirming',
+        });
+      },
     });
     chainMintAddress = minted.mintAddress;
 
@@ -2624,10 +2715,10 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
     selectedDraftId = null;
     editingDraftIdInput.value = '';
     collectionStudioPane = 'gallery';
+    publishCollectionMintProgress({ type: 'indexing' });
     await refreshActiveCollectionFromChain();
+    publishPostMintDasProgress(minted.mintAddress);
     setStatus(`${prepared.name} minted in this collection. ${shortAddress(minted.mintAddress)}`);
-    showActionPopup('NFT created', `${prepared.name} was minted.`, 'success');
-    hideActionPopup(1600);
   } catch (error) {
     console.error(error);
     const latest =
@@ -2651,7 +2742,9 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
         })
       );
       await persistStudioSnapshot();
+      publishCollectionMintProgress({ type: 'indexing' });
       await refreshActiveCollectionFromChain();
+      publishPostMintDasProgress(chainMintAddress);
       setError(
         'The NFT was minted, but saving local status failed. Do not mint this item again. Check the explorer.'
       );
@@ -2661,20 +2754,16 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
     if (latest && shouldMarkDraftFailedAfterMintError(latest, chainMintAddress)) {
       await persistDraft(markDraftMintOutcome(latest, { status: 'failed' }));
       await renderCollectionManager();
+      failCollectionMintProgress(error, mintTransactionSubmitted);
       setError(message);
-      showActionPopup('NFT creation failed', message, 'error');
-      hideActionPopup(2200);
       return;
     }
 
     await renderCollectionManager();
+    failCollectionMintProgress(error, mintTransactionSubmitted);
     setError(
       `${message} Mint may already have been submitted. Do not mint this item again. Check the explorer.`
     );
-    showActionPopup('NFT creation failed', message, 'error');
-    hideActionPopup(2200);
-  } finally {
-    isBusy = false;
   }
 }
 
@@ -2721,7 +2810,7 @@ addExistingNftButton.addEventListener('click', async () => {
     return;
   }
 
-  isBusy = true;
+  setBusy(true);
 
   try {
     const ready = await ensureReadyToMint();
@@ -2771,7 +2860,7 @@ addExistingNftButton.addEventListener('click', async () => {
     showActionPopup('Add existing NFT failed', message, 'error');
     hideActionPopup(2200);
   } finally {
-    isBusy = false;
+    setBusy(false);
   }
 });
 
