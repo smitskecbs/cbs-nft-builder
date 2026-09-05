@@ -1,3 +1,7 @@
+import {
+  resolveDasImageUri,
+  resolveMetadataImageUri,
+} from './assetUri';
 import type { SolanaNetwork } from './config';
 import {
   fetchCollectionOnChain,
@@ -65,6 +69,7 @@ export type DasManagedCollectionCandidate = {
   mint: string;
   name: string;
   imageUri: string | null;
+  metadataUri: string;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -117,11 +122,6 @@ export function dasAssetIsCollectionMemberOfOtherMint(asset: DasAssetLike): bool
   });
 }
 
-function dasImageUri(asset: DasAssetLike): string | null {
-  const image = stringOrEmpty(asset.content?.links?.image) || stringOrEmpty(asset.content?.files?.[0]?.uri);
-  return image || null;
-}
-
 export function parseDasManagedCollectionCandidate(
   raw: unknown,
   authorityAddress: string
@@ -164,7 +164,8 @@ export function parseDasManagedCollectionCandidate(
   return {
     mint,
     name: stringOrEmpty(asset.content?.metadata?.name) || mint,
-    imageUri: dasImageUri(asset),
+    imageUri: resolveDasImageUri(asset.content),
+    metadataUri: stringOrEmpty(asset.content?.json_uri),
   };
 }
 
@@ -250,10 +251,15 @@ export async function discoverManagedCollections(params: {
           continue;
         }
 
+        let imageUri = candidate.imageUri;
+        if (!imageUri && candidate.metadataUri) {
+          imageUri = await resolveMetadataImageUri(candidate.metadataUri);
+        }
+
         collections.push({
           mint: view.mint,
           name: view.name || candidate.name,
-          imageUri: candidate.imageUri,
+          imageUri,
           updateAuthority: view.updateAuthority,
           network: params.network,
         });

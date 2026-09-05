@@ -66,6 +66,7 @@ import {
   renderResolvedItemPreviewMarkup,
   renderStudioDefaultsMarkup,
   fieldSourceLabel,
+  handleDiscoveredArtworkError,
   YOUR_COLLECTIONS_LOAD_FAILED,
   YOUR_COLLECTIONS_NONE_FOUND,
   YOUR_COLLECTIONS_WALLET_DISCONNECTED,
@@ -172,6 +173,26 @@ if (!app) {
 }
 
 app.innerHTML = renderAppMarkup();
+
+app.addEventListener(
+  'error',
+  (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLImageElement)) {
+      return;
+    }
+
+    if (
+      !target.classList.contains('nft-card-art')
+      && !target.classList.contains('studio-cover')
+    ) {
+      return;
+    }
+
+    handleDiscoveredArtworkError(target);
+  },
+  true
+);
 
 const appShell = requireElement<HTMLDivElement>('#appShell');
 const homeBrandButton = requireElement<HTMLButtonElement>('#homeBrandButton');

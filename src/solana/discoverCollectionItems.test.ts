@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   COLLECTION_ITEM_DISCOVERY_FAILURE_MESSAGE,
@@ -12,6 +12,7 @@ import {
   type DasAssetLike,
   type DiscoveredCollectionItem,
 } from './discoverCollectionItems';
+import { resetMetadataImageCache } from './assetUri';
 import { defaultStudioDefaults } from '../studio/defaults';
 import { addItemDraftToExistingCollection, collectionProgress, mergeManagerListItems } from '../studio/resume';
 import { defaultStudioNumbering } from '../studio/numbering';
@@ -32,15 +33,20 @@ function dasNft(params: {
   verified?: boolean;
   iface?: string;
   owner?: string;
-  image?: string;
+  image?: string | null;
+  files?: Array<{ uri?: string; cdn_uri?: string; mime?: string; type?: string }>;
+  jsonUri?: string;
 }): DasAssetLike {
+  const links =
+    params.image === null ? {} : { image: params.image ?? 'https://example.com/pixel.png' };
   return {
     id: params.mint,
     interface: params.iface ?? 'V1_NFT',
     content: {
-      json_uri: `https://example.com/${params.mint}.json`,
+      json_uri: params.jsonUri ?? `https://example.com/${params.mint}.json`,
       metadata: { name: params.name, symbol: 'MANGO' },
-      links: { image: params.image ?? 'https://example.com/pixel.png' },
+      links,
+      files: params.files,
     },
     grouping: [
       {
@@ -98,6 +104,12 @@ function collectionCache(items: Array<{ mint: string; number: number; verified: 
 }
 
 describe('on-chain collection item discovery', () => {
+  afterEach(() => {
+    resetMetadataImageCache();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
   it('builds a read-only getAssetsByGroup request without owner or transaction fields', () => {
     const body = buildGetAssetsByGroupRequest({ collectionMint: COLLECTION, page: 1 });
     const json = JSON.stringify(body);
@@ -391,5 +403,231 @@ describe('on-chain collection item discovery', () => {
     expect(managerHasMintAll(html)).toBe(false);
     expect(html.toLowerCase()).not.toContain('mint all');
     expect(html).not.toContain('signature');
+  });
+
+  it('keeps recent DAS https artwork unchanged and does not fetch json_uri', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const parsed = parseDasCollectionAsset(
+      dasNft({
+        mint: 'Item001',
+        name: 'ManGo Pixel #001',
+        collection: COLLECTION,
+        verified: true,
+        image: 'https://example.com/pixel.png',
+      }),
+      COLLECTION
+    );
+    expect(parsed?.imageUri).toBe('https://example.com/pixel.png');
+
+    const result = await discoverCollectionItems({
+      network: 'mainnet',
+      collectionMint: COLLECTION,
+      onChainVerifiedSize: 1,
+      rpcPost: async () =>
+        page([
+          dasNft({
+            mint: 'Item001',
+            name: 'ManGo Pixel #001',
+            collection: COLLECTION,
+            verified: true,
+            image: 'https://example.com/pixel.png',
+          }),
+        ]),
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.items[0]?.imageUri).toBe('https://example.com/pixel.png');
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts DAS links.image ipfs:// URIs', () => {
+    const parsed = parseDasCollectionAsset(
+      dasNft({
+        mint: 'Item001',
+        name: 'Legacy Pixel #001',
+        collection: COLLECTION,
+        verified: true,
+        image: 'ipfs://bafylegacy/art.png',
+      }),
+      COLLECTION
+    );
+
+    expect(parsed?.imageUri).toBe('ipfs://bafylegacy/art.png');
+  });
+
+  it('prefers files[].cdn_uri and accepts files[].uri ipfs://', () => {
+    const withCdn = parseDasCollectionAsset(
+      dasNft({
+        mint: 'Item001',
+        name: 'Legacy Pixel #001',
+        collection: COLLECTION,
+        verified: true,
+        image: null,
+        files: [
+          {
+            uri: 'ipfs://bafyfile/art.png',
+            cdn_uri: 'https://cdn.helius-rpc.com/art.png',
+            mime: 'image/png',
+          },
+        ],
+      }),
+      COLLECTION
+    );
+    const withIpfsFile = parseDasCollectionAsset(
+      dasNft({
+        mint: 'Item002',
+        name: 'Legacy Pixel #002',
+        collection: COLLECTION,
+        verified: true,
+        image: null,
+        files: [{ uri: 'ipfs://bafyfile/art.png', mime: 'image/png' }],
+      }),
+      COLLECTION
+    );
+
+    expect(withCdn?.imageUri).toBe('https://cdn.helius-rpc.com/art.png');
+    expect(withIpfsFile?.imageUri).toBe('ipfs://bafyfile/art.png');
+  });
+
+  it('does not treat metadata JSON URLs as item artwork', () => {
+    const parsed = parseDasCollectionAsset(
+      dasNft({
+        mint: 'Item001',
+        name: 'Legacy Pixel #001',
+        collection: COLLECTION,
+        verified: true,
+        image: 'https://example.com/item.json',
+        files: [{ uri: 'https://example.com/item.json', mime: 'application/json' }],
+      }),
+      COLLECTION
+    );
+
+    expect(parsed?.imageUri).toBeNull();
+    expect(parsed?.metadataUri).toBe('https://example.com/Item001.json');
+  });
+
+  it('fetches json_uri when DAS has no artwork and uses metadata image', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      expect(String(url)).toBe('https://example.com/legacy.json');
+      return {
+        ok: true,
+        json: async () => ({ image: 'ipfs://bafymeta/art.png' }),
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await discoverCollectionItems({
+      network: 'mainnet',
+      collectionMint: COLLECTION,
+      onChainVerifiedSize: 1,
+      rpcPost: async () =>
+        page([
+          dasNft({
+            mint: 'Item001',
+            name: 'Legacy Pixel #001',
+            collection: COLLECTION,
+            verified: true,
+            image: null,
+            jsonUri: 'https://example.com/legacy.json',
+          }),
+        ]),
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.items[0]?.imageUri).toBe('ipfs://bafymeta/art.png');
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('can recover artwork from metadata properties.files', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          properties: {
+            files: [{ uri: 'https://arweave.net/legacy-art', type: 'image/png' }],
+          },
+        }),
+      }))
+    );
+
+    const result = await discoverCollectionItems({
+      network: 'mainnet',
+      collectionMint: COLLECTION,
+      onChainVerifiedSize: 1,
+      rpcPost: async () =>
+        page([
+          dasNft({
+            mint: 'Item001',
+            name: 'Legacy Pixel #001',
+            collection: COLLECTION,
+            verified: true,
+            image: null,
+            jsonUri: 'https://example.com/legacy.json',
+          }),
+        ]),
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.items[0]?.imageUri).toBe('https://arweave.net/legacy-art');
+    }
+  });
+
+  it('does not fail discovery when metadata fetch fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('timeout');
+      })
+    );
+
+    const result = await discoverCollectionItems({
+      network: 'mainnet',
+      collectionMint: COLLECTION,
+      onChainVerifiedSize: 1,
+      rpcPost: async () =>
+        page([
+          dasNft({
+            mint: 'Item001',
+            name: 'Legacy Pixel #001',
+            collection: COLLECTION,
+            verified: true,
+            image: null,
+            jsonUri: 'https://example.com/legacy.json',
+          }),
+        ]),
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]?.imageUri).toBeNull();
+    }
+  });
+
+  it('renders IPFS artwork through Pinata with a single ipfs.io fallback', () => {
+    const html = renderManagerItemListMarkup(
+      mergeManagerListItems({
+        discovered: [
+          {
+            ...mangoItems()[0],
+            imageUri: 'ipfs://bafylegacy/art.png',
+          },
+        ],
+        drafts: [],
+      }),
+      { digitCount: 3, network: 'mainnet' }
+    );
+
+    expect(html).toContain('https://gateway.pinata.cloud/ipfs/bafylegacy/art.png');
+    expect(html).toContain('data-ipfs-fallback="https://ipfs.io/ipfs/bafylegacy/art.png"');
+    expect(html).not.toContain('ipfs://bafylegacy/art.png');
   });
 });

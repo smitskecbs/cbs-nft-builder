@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { OnChainCollectionView } from './collectionOnChain';
+import { resetMetadataImageCache } from './assetUri';
 import type { DasAssetLike } from './discoverCollectionItems';
 import {
   MANAGED_COLLECTION_DISCOVERY_METHOD,
@@ -29,15 +30,20 @@ function dasAsset(params: {
   collection?: string;
   iface?: string;
   burnt?: boolean;
-  image?: string;
+  image?: string | null;
+  files?: Array<{ uri?: string; cdn_uri?: string; mime?: string; type?: string }>;
+  jsonUri?: string;
 }): DasAssetLike {
+  const links =
+    params.image === null ? {} : { image: params.image ?? 'https://example.com/cover.png' };
   return {
     id: params.mint,
     interface: params.iface ?? 'V1_NFT',
     content: {
-      json_uri: `https://example.com/${params.mint}.json`,
+      json_uri: params.jsonUri ?? `https://example.com/${params.mint}.json`,
       metadata: { name: params.name, symbol: 'TEST' },
-      links: { image: params.image ?? 'https://example.com/cover.png' },
+      links,
+      files: params.files,
     },
     authorities: [{ address: params.authority ?? WALLET, scopes: ['full'] }],
     grouping: params.collection
@@ -75,6 +81,12 @@ function collectionView(params: Partial<OnChainCollectionView> = {}): OnChainCol
 }
 
 describe('managed collection discovery', () => {
+  afterEach(() => {
+    resetMetadataImageCache();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
   it('searches DAS by update authority rather than wallet ownership', () => {
     const body = buildSearchAssetsByAuthorityRequest({
       authorityAddress: WALLET,
@@ -172,6 +184,112 @@ describe('managed collection discovery', () => {
 
     expect(result.collections).toEqual([]);
   });
+
+  it('keeps https collection artwork and does not fetch json_uri', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const parsed = parseDasManagedCollectionCandidate(
+      dasAsset({ mint: COLLECTION_MINT, name: 'Cats Collection' }),
+      WALLET
+    );
+    expect(parsed?.imageUri).toBe('https://example.com/cover.png');
+
+    const result = await discoverManagedCollections({
+      network: 'mainnet',
+      walletAddress: WALLET,
+      rpcPost: async () => page([dasAsset({ mint: COLLECTION_MINT, name: 'Cats Collection' })]),
+      fetchCollection: async () => collectionView(),
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.collections[0]?.imageUri).toBe('https://example.com/cover.png');
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts ipfs:// collection artwork and ignores metadata JSON as an image', () => {
+    const ipfs = parseDasManagedCollectionCandidate(
+      dasAsset({
+        mint: COLLECTION_MINT,
+        name: 'Cats Collection',
+        image: 'ipfs://bafycover/cover.png',
+      }),
+      WALLET
+    );
+    const jsonOnly = parseDasManagedCollectionCandidate(
+      dasAsset({
+        mint: COLLECTION_MINT,
+        name: 'Cats Collection',
+        image: 'https://example.com/collection.json',
+      }),
+      WALLET
+    );
+
+    expect(ipfs?.imageUri).toBe('ipfs://bafycover/cover.png');
+    expect(jsonOnly?.imageUri).toBeNull();
+  });
+
+  it('fetches collection json_uri only when DAS has no artwork', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ image: 'https://arweave.net/cover' }),
+      }))
+    );
+
+    const result = await discoverManagedCollections({
+      network: 'mainnet',
+      walletAddress: WALLET,
+      rpcPost: async () =>
+        page([
+          dasAsset({
+            mint: COLLECTION_MINT,
+            name: 'Cats Collection',
+            image: null,
+            jsonUri: 'https://example.com/collection.json',
+          }),
+        ]),
+      fetchCollection: async () => collectionView(),
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.collections[0]?.imageUri).toBe('https://arweave.net/cover');
+    }
+  });
+
+  it('does not fail managed discovery when metadata fetch fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('timeout');
+      })
+    );
+
+    const result = await discoverManagedCollections({
+      network: 'mainnet',
+      walletAddress: WALLET,
+      rpcPost: async () =>
+        page([
+          dasAsset({
+            mint: COLLECTION_MINT,
+            name: 'Cats Collection',
+            image: null,
+            jsonUri: 'https://example.com/collection.json',
+          }),
+        ]),
+      fetchCollection: async () => collectionView(),
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.collections).toHaveLength(1);
+      expect(result.collections[0]?.imageUri).toBeNull();
+    }
+  });
 });
 
 describe('managed collection cards', () => {
@@ -192,6 +310,20 @@ describe('managed collection cards', () => {
     expect(html).toContain('https://example.com/cover.png');
     expect(html).not.toContain('3M6W1vqH7c7gNdh7moLcN3HTcCffBn8ohVrx9aZFRGG2');
     expect(html).not.toContain('ManGo');
+  });
+
+  it('renders IPFS collection artwork through Pinata with a single ipfs.io fallback', () => {
+    const html = renderManagedCollectionsMarkup([
+      {
+        mint: COLLECTION_MINT,
+        name: 'Cats Collection',
+        imageUri: 'ipfs://bafycover/cover.png',
+        network: 'mainnet',
+      },
+    ]);
+
+    expect(html).toContain('https://gateway.pinata.cloud/ipfs/bafycover/cover.png');
+    expect(html).toContain('data-ipfs-fallback="https://ipfs.io/ipfs/bafycover/cover.png"');
   });
 });
 

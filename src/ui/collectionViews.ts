@@ -1,5 +1,4 @@
 import { escapeHtml, shortAddress } from './html';
-import { toPinataGatewayUrl } from '../metadata/buildNftMetadata';
 import { getExplorerNftUrl, getExplorerTxUrl } from '../solana/explorer';
 import { INDEXING_NOTICE } from '../solana/mintResult';
 import { PLANNED_SIZE_NOT_ON_CHAIN_NOTE } from '../collection/constants';
@@ -7,6 +6,7 @@ import type { CachedCollection } from '../collection/persistence';
 import type { ExistingNftAttachPlan } from '../collection/existingItem';
 import type { OnChainCollectionView } from '../solana/collectionOnChain';
 import type { SolanaNetwork } from '../solana/config';
+import { nextIpfsGatewaySrc, normalizeAssetUri } from '../solana/assetUri';
 import type { StudioCapacityView } from '../studio/capacity';
 import type { StudioDefaults, StudioDraft } from '../studio/types';
 import { collectionItemStatusLabel, draftStatusLabel, isNumberLocked } from '../studio/types';
@@ -141,26 +141,54 @@ function compactMint(address: string): string {
   return `${address.slice(0, 5)}…${address.slice(-5)}`;
 }
 
-function looksLikeImageUrl(uri: string): boolean {
-  const path = uri.split('?')[0].toLowerCase();
-  return /\.(png|jpe?g|gif|webp|svg)$/.test(path);
+function looksLikeImageFileUrl(uri: string): boolean {
+  return /\.(png|jpe?g|gif|webp|svg|avif)$/i.test(uri.split('?')[0] ?? uri);
 }
 
 function toDisplayImageUrl(uri: string | null | undefined): string | null {
-  if (!uri) {
-    return null;
+  return normalizeAssetUri(uri);
+}
+
+function discoveredArtworkMarkup(params: {
+  imageUri: string | null | undefined;
+  className: string;
+  emptyClassName?: string;
+  emptyLetter: string;
+  alt: string;
+}): string {
+  const imageUrl = toDisplayImageUrl(params.imageUri);
+  if (!imageUrl) {
+    const emptyClass = params.emptyClassName
+      ? `${params.className} ${params.emptyClassName}`
+      : params.className;
+    return `<div class="${emptyClass}" aria-hidden="true">${escapeHtml(params.emptyLetter)}</div>`;
   }
 
-  const trimmed = uri.trim();
-  if (!trimmed) {
-    return null;
+  const fallback = nextIpfsGatewaySrc(imageUrl);
+  const fallbackAttr = fallback ? ` data-ipfs-fallback="${escapeHtml(fallback)}"` : '';
+  return `<img class="${params.className}" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(params.alt)}"${fallbackAttr} />`;
+}
+
+export function handleDiscoveredArtworkError(img: HTMLImageElement): void {
+  const next = img.getAttribute('data-ipfs-fallback');
+  img.removeAttribute('data-ipfs-fallback');
+  if (next && next !== img.getAttribute('src')) {
+    img.src = next;
+    return;
   }
 
-  if (trimmed.startsWith('ipfs://')) {
-    return toPinataGatewayUrl(trimmed);
-  }
-
-  return trimmed;
+  const name = img.getAttribute('alt') || '';
+  const letter = (
+    name.replace(/\s+artwork$/i, '').trim()[0]
+    || (img.classList.contains('studio-cover') ? 'C' : '#')
+  ).toUpperCase();
+  const placeholder = document.createElement('div');
+  placeholder.className = img.classList.contains('studio-cover')
+    ? 'studio-cover'
+    : 'nft-card-art nft-card-art-empty';
+  placeholder.setAttribute('aria-hidden', 'true');
+  placeholder.textContent = letter;
+  img.replaceWith(placeholder);
 }
 
 export function renderCollectionManagerMarkup(params: {
@@ -195,13 +223,13 @@ export function renderCollectionManagerMarkup(params: {
         : params.nextNumberLabel;
   const explorerUrl = getExplorerNftUrl(params.cache.network, onChainMint);
   const coverLetter = (onChainName.trim()[0] || 'C').toUpperCase();
-  const coverImage =
-    params.onChain?.uri && looksLikeImageUrl(params.onChain.uri)
-      ? toDisplayImageUrl(params.onChain.uri)
-      : null;
-  const coverMarkup = coverImage
-    ? `<img class="studio-cover" src="${escapeHtml(coverImage)}" alt="" />`
-    : `<div class="studio-cover" aria-hidden="true">${escapeHtml(coverLetter)}</div>`;
+  const coverUri = params.onChain?.uri ?? null;
+  const coverMarkup = discoveredArtworkMarkup({
+    imageUri: coverUri && looksLikeImageFileUrl(coverUri) ? coverUri : null,
+    className: 'studio-cover',
+    emptyLetter: coverLetter,
+    alt: '',
+  });
 
   return `
     <div class="studio-hero">
@@ -372,10 +400,13 @@ export function renderManagerItemListMarkup(
     .map((item) => {
       const numberLabel =
         item.number !== null ? formatStudioItemNumber(item.number, digitCount) : '';
-      const imageUrl = toDisplayImageUrl(item.imageUri);
-      const artwork = imageUrl
-        ? `<img class="nft-card-art" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(item.name)} artwork" />`
-        : `<div class="nft-card-art nft-card-art-empty" aria-hidden="true">${escapeHtml((item.name.trim()[0] || '#').toUpperCase())}</div>`;
+      const artwork = discoveredArtworkMarkup({
+        imageUri: item.imageUri,
+        className: 'nft-card-art',
+        emptyClassName: 'nft-card-art-empty',
+        emptyLetter: (item.name.trim()[0] || '#').toUpperCase(),
+        alt: `${item.name} artwork`,
+      });
       const source = item.kind === 'on-chain' ? 'On-chain item' : 'Local draft';
       const minted = item.minted ? '<span class="nft-card-meta">Minted</span>' : '<span class="nft-card-meta">Prepared</span>';
       const verified =
@@ -521,10 +552,13 @@ export function renderManagedCollectionsMarkup(collections: readonly ManagedColl
   return collections
     .map((collection) => {
       const network = collection.network === 'mainnet' ? 'Mainnet' : 'Devnet';
-      const imageUrl = toDisplayImageUrl(collection.imageUri);
-      const artwork = imageUrl
-        ? `<img class="nft-card-art" src="${escapeHtml(imageUrl)}" alt="" />`
-        : `<div class="nft-card-art nft-card-art-empty" aria-hidden="true">${escapeHtml((collection.name.trim()[0] || 'C').toUpperCase())}</div>`;
+      const artwork = discoveredArtworkMarkup({
+        imageUri: collection.imageUri,
+        className: 'nft-card-art',
+        emptyClassName: 'nft-card-art-empty',
+        emptyLetter: (collection.name.trim()[0] || 'C').toUpperCase(),
+        alt: '',
+      });
 
       return `
         <article class="nft-card managed-collection-card">

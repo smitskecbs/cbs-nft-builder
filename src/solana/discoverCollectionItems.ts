@@ -1,4 +1,9 @@
 import { extractStudioItemNumberFromName } from '../studio/numbering';
+import {
+  fillMissingArtworkFromMetadata,
+  resolveDasImageUri,
+} from './assetUri';
+import type { DasFileLike } from './assetUri';
 import { fetchExistingNftSnapshot } from './collectionOnChain';
 import type { SolanaNetwork } from './config';
 import { getRpc } from './config';
@@ -68,7 +73,7 @@ export type DasAssetLike = {
     json_uri?: unknown;
     metadata?: { name?: unknown; symbol?: unknown };
     links?: { image?: unknown };
-    files?: Array<{ uri?: unknown }>;
+    files?: DasFileLike[];
   };
   grouping?: Array<{
     group_key?: unknown;
@@ -142,19 +147,6 @@ function stringOrEmpty(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function httpsOrNull(value: unknown): string | null {
-  const text = stringOrEmpty(value);
-  if (!text) {
-    return null;
-  }
-
-  if (text.startsWith('https://') || text.startsWith('http://')) {
-    return text;
-  }
-
-  return null;
-}
-
 export function tokenStandardFromDasInterface(value: unknown): string | null {
   if (value === 'V1_NFT' || value === 'V2_NFT' || value === 'LEGACY_NFT') {
     return 'NonFungible';
@@ -212,9 +204,7 @@ export function parseDasCollectionAsset(
 
   const name = stringOrEmpty(asset.content?.metadata?.name) || mint;
   const metadataUri = stringOrEmpty(asset.content?.json_uri);
-  const imageUri =
-    httpsOrNull(asset.content?.links?.image) ??
-    httpsOrNull(asset.content?.files?.[0]?.uri);
+  const imageUri = resolveDasImageUri(asset.content);
   const verified =
     typeof match.verified === 'boolean'
       ? match.verified
@@ -355,6 +345,8 @@ export async function discoverCollectionItems(params: {
     if (!params.rpcPost) {
       items = await hydrateVerifiedFromChain(params.network, params.collectionMint, items);
     }
+
+    items = await fillMissingArtworkFromMetadata(items);
 
     const coverage = assertDiscoveryCoversVerifiedSize({
       discoveredCount: items.length,
