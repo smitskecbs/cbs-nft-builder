@@ -2,6 +2,9 @@
   "functions": {
     "api/upload-to-pinata.js": {
       "maxDuration": 30
+    },
+    "api/rpc.js": {
+      "maxDuration": 10
     }
   }
 }

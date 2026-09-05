@@ -9,6 +9,10 @@ export default defineConfig(({ mode }) => {
     process.env.PINATA_JWT = env.PINATA_JWT;
   }
 
+  if (env.HELIUS_MAINNET_RPC) {
+    process.env.HELIUS_MAINNET_RPC = env.HELIUS_MAINNET_RPC;
+  }
+
   return {
     base: '/',
     server: {
@@ -41,6 +45,33 @@ export default defineConfig(({ mode }) => {
               res.statusCode = 500;
               res.setHeader('Content-Type', 'application/json; charset=utf-8');
               res.end(JSON.stringify({ error: 'Pinata upload failed.' }));
+            }
+          });
+        },
+      },
+      {
+        name: 'cbs-mainnet-rpc-proxy',
+        configureServer(server) {
+          server.middlewares.use(async (req, res, next) => {
+            const url = req.url?.split('?')[0];
+
+            if (url !== '/api/rpc') {
+              next();
+              return;
+            }
+
+            try {
+              const { default: handler } = await import('./api/rpc.js');
+
+              await handler(req, res);
+            } catch {
+              if (res.writableEnded) {
+                return;
+              }
+
+              res.statusCode = 502;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'RPC upstream unavailable' }));
             }
           });
         },
