@@ -111,6 +111,7 @@ import {
 } from './studio/resolve';
 import {
   createStudioDraft,
+  draftStatusAfterMintSend,
   importFilesAsDrafts,
   markDraftMintOutcome,
   removeDraft,
@@ -132,7 +133,7 @@ import {
   validateStudioNumbering,
 } from './studio/numbering';
 import { defaultsFromCollection, numberingFromCollection } from './studio/session';
-import { isNumberLocked, type StudioDraft } from './studio/types';
+import { hasOnChainMintProof, isNumberLocked, type StudioDraft } from './studio/types';
 import { attachDraftsToCollectionMint, draftsForOpenedCollection } from './studio/link';
 import {
   assertMintTargetsDraft,
@@ -1126,6 +1127,11 @@ async function loadPendingDrafts(): Promise<void> {
 async function loadStudioDraftsForActiveCollection(): Promise<void> {
   const key = activeCollectionKey();
   studioDrafts = key ? await studioStore.getDrafts(key) : [];
+  for (const draft of studioDrafts) {
+    if (draft.status === 'failed' && !hasOnChainMintProof(draft)) {
+      await studioStore.putDraft(draft);
+    }
+  }
 }
 
 function bindDraftListActions(container: HTMLElement, pending: boolean): void {
@@ -2530,8 +2536,7 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
       `Your wallet will mint ${prepared.name} into this collection and verify it.`,
       'loading'
     );
-    workingDraft = markDraftMintOutcome(draft, { status: 'mint_submitted' });
-    await persistDraft(workingDraft);
+    workingDraft = draft;
     const minted = await createCollectionItemNft({
       network: ready.network,
       walletProvider: ready.wallet,
@@ -2555,8 +2560,15 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
       (item) => item.id === draft.id
     ) ?? workingDraft;
     const completed = markDraftMintOutcome(latest, {
-      status: minted.collectionVerified ? 'collection_verified' : 'minted',
+      status: draftStatusAfterMintSend({
+        sendSucceeded: true,
+        confirmSucceeded: minted.confirmSucceeded,
+        collectionVerified: minted.collectionVerified,
+        mintAddress: minted.mintAddress,
+        signature: minted.signature,
+      }),
       mintAddress: minted.mintAddress,
+      mintSignature: minted.signature,
     });
     await persistDraft(completed);
     await persistStudioSnapshot();

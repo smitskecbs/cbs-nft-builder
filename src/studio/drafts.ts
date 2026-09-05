@@ -69,6 +69,7 @@ export function createStudioDraft(params: {
     overrides: {},
     artwork: params.artwork,
     mintAddress: null,
+    mintSignature: null,
     sortIndex: params.sortIndex,
     createdAt: now,
     updatedAt: now,
@@ -289,14 +290,35 @@ export function markDraftMintOutcome(
   outcome: {
     status: Extract<DraftStatus, 'mint_submitted' | 'minted' | 'collection_verified' | 'failed'>;
     mintAddress?: string | null;
+    mintSignature?: string | null;
   }
 ): StudioDraft {
   return {
     ...draft,
     status: outcome.status,
     mintAddress: outcome.mintAddress ?? draft.mintAddress,
+    mintSignature: outcome.mintSignature ?? draft.mintSignature ?? null,
     updatedAt: Date.now(),
   };
+}
+
+export function draftStatusAfterMintSend(params: {
+  sendSucceeded: boolean;
+  confirmSucceeded: boolean;
+  collectionVerified: boolean;
+  mintAddress?: string | null;
+  signature?: string | null;
+}): Extract<DraftStatus, 'mint_submitted' | 'minted' | 'collection_verified' | 'failed'> {
+  const hasProof = Boolean(params.mintAddress?.trim() || params.signature?.trim());
+  if (!params.sendSucceeded || !hasProof) {
+    return 'failed';
+  }
+
+  if (!params.confirmSucceeded) {
+    return 'mint_submitted';
+  }
+
+  return params.collectionVerified ? 'collection_verified' : 'minted';
 }
 
 export function effectiveDraftDescription(

@@ -1,7 +1,7 @@
 import { formatStudioItemNumber, type StudioNumbering } from './numbering';
 import { duplicateMintBlocked } from './resume';
 import { resolveDraftMetadata } from './resolve';
-import { isNumberLocked, isPreparedDraft, type StudioDefaults, type StudioDraft } from './types';
+import { isNumberLocked, isPreparedDraft, recoverUnprovenMintDraftStatus, hasOnChainMintProof, type StudioDefaults, type StudioDraft } from './types';
 import type { NftAttribute } from '../validation/attributes';
 
 export type PreparedItemMint = {
@@ -25,9 +25,9 @@ export function canMintStudioDraft(draft: StudioDraft): boolean {
 
   return (
     Boolean(draft.collectionMint) &&
-    draft.mintAddress === null &&
-    !isNumberLocked(draft.status) &&
-    isPreparedDraft(draft.status) &&
+    !hasOnChainMintProof(draft) &&
+    !isNumberLocked(recoverUnprovenMintDraftStatus(draft.status, draft)) &&
+    isPreparedDraft(recoverUnprovenMintDraftStatus(draft.status, draft)) &&
     Boolean(draft.artwork)
   );
 }
@@ -90,15 +90,7 @@ export function shouldMarkDraftFailedAfterMintError(
   draft: StudioDraft,
   chainMintAddress: string | null
 ): boolean {
-  if (chainMintAddress || draft.mintAddress) {
-    return false;
-  }
-
-  if (
-    draft.status === 'mint_submitted' ||
-    draft.status === 'minted' ||
-    draft.status === 'collection_verified'
-  ) {
+  if (chainMintAddress || hasOnChainMintProof(draft)) {
     return false;
   }
 

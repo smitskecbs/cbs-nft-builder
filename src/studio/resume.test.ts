@@ -227,7 +227,7 @@ describe('collection resume and isolation', () => {
     expect(created.collectionMint).toBe(collection.mint);
     expect(created.mintAddress).toBeNull();
     expect(created.status).toBe('draft');
-    expect(JSON.stringify(created)).not.toContain('signature');
+    expect(created.mintSignature ?? null).toBeNull();
   });
 
   it('continues numbering after existing drafts and does not treat a number as on-chain proof', () => {

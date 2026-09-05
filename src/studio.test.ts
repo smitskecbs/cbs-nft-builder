@@ -704,6 +704,6 @@ describe('collection manager draft continuation', () => {
       network: 'devnet',
     });
     expect(linked.every((draft) => draft.status !== 'mint_submitted')).toBe(true);
-    expect(JSON.stringify(linked)).not.toContain('signature');
+    expect(linked.every((draft) => !draft.mintSignature)).toBe(true);
   });
 });

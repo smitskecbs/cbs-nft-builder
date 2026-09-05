@@ -64,6 +64,7 @@ export type StudioDraft = {
   overrides: StudioDraftOverrides;
   artwork: StudioDraftArtwork | null;
   mintAddress: string | null;
+  mintSignature?: string | null;
   sortIndex: number;
   createdAt: number;
   updatedAt: number;
@@ -76,6 +77,36 @@ type LegacyStudioDraftRecord = Partial<StudioDraft> & {
   attributes?: NftAttribute[];
   attributesOverride?: NftAttribute[] | null;
 };
+
+function optionalProofString(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+export function hasOnChainMintProof(draft: {
+  mintAddress?: string | null;
+  mintSignature?: string | null;
+}): boolean {
+  return Boolean(optionalProofString(draft.mintAddress) || optionalProofString(draft.mintSignature));
+}
+
+export function recoverUnprovenMintDraftStatus(status: DraftStatus, draft: {
+  mintAddress?: string | null;
+  mintSignature?: string | null;
+}): DraftStatus {
+  if (
+    (status === 'mint_submitted' || status === 'minted' || status === 'collection_verified')
+    && !hasOnChainMintProof(draft)
+  ) {
+    return 'failed';
+  }
+
+  return status;
+}
 
 export function normalizeStudioDraft(raw: unknown): StudioDraft {
   const record = (raw ?? {}) as LegacyStudioDraftRecord;
@@ -105,6 +136,10 @@ export function normalizeStudioDraft(raw: unknown): StudioDraft {
     }
   }
 
+  const mintAddress = optionalProofString(record.mintAddress);
+  const mintSignature = optionalProofString(record.mintSignature);
+  const rawStatus = (record.status as DraftStatus) ?? 'draft';
+
   return {
     id: String(record.id ?? ''),
     collectionKey: String(record.collectionKey ?? ''),
@@ -112,10 +147,11 @@ export function normalizeStudioDraft(raw: unknown): StudioDraft {
     collectionMint: record.collectionMint ?? null,
     number: Number(record.number) || 0,
     name: String(record.name ?? ''),
-    status: (record.status as DraftStatus) ?? 'draft',
+    status: recoverUnprovenMintDraftStatus(rawStatus, { mintAddress, mintSignature }),
     overrides,
     artwork: record.artwork ?? null,
-    mintAddress: record.mintAddress ?? null,
+    mintAddress,
+    mintSignature,
     sortIndex: Number(record.sortIndex) || 0,
     createdAt: Number(record.createdAt) || 0,
     updatedAt: Number(record.updatedAt) || 0,

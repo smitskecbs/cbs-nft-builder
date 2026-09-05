@@ -15,7 +15,7 @@ import {
 } from './numbering';
 import { collectionStudioKey } from './persistence';
 import type { StudioDefaults, StudioDraft, StudioSettings } from './types';
-import { isNumberLocked, isPreparedDraft } from './types';
+import { isPreparedDraft, hasOnChainMintProof } from './types';
 
 export function networkDisplayName(network: SolanaNetwork): 'Mainnet' | 'Devnet' {
   return network === 'mainnet' ? 'Mainnet' : 'Devnet';
@@ -51,7 +51,7 @@ export function mintedNumbersFromRecords(
 ): number[] {
   const fromChainCache = items.map((item) => item.number);
   const fromMintedDrafts = drafts
-    .filter((draft) => Boolean(draft.mintAddress) || isNumberLocked(draft.status))
+    .filter((draft) => hasOnChainMintProof(draft))
     .map((draft) => draft.number);
   const fromDiscovered = discovered
     .map((item) => item.number)
@@ -180,17 +180,12 @@ export function collectionProgress(params: {
 }
 
 export function duplicateMintBlocked(draft: StudioDraft): { blocked: true; reason: string } | { blocked: false } {
-  if (draft.mintAddress) {
+  if (hasOnChainMintProof(draft)) {
     return {
       blocked: true,
-      reason: 'This item already has a mint address. It will not be minted again.',
-    };
-  }
-
-  if (draft.status === 'mint_submitted' || draft.status === 'minted' || draft.status === 'collection_verified') {
-    return {
-      blocked: true,
-      reason: 'This item was already submitted or minted. Check the explorer before doing anything else.',
+      reason: draft.mintAddress
+        ? 'This item already has a mint address. It will not be minted again.'
+        : 'This item was already submitted. Check the explorer before doing anything else.',
     };
   }
 
@@ -334,8 +329,8 @@ export function mergeManagerListItems(params: {
       mintAddress: draft.mintAddress,
       metadataUri: null,
       imageUri: params.artworkPreviewUrls?.get(draft.id) ?? null,
-      collectionVerified: draft.status === 'collection_verified' ? true : null,
-      minted: Boolean(draft.mintAddress),
+      collectionVerified: draft.status === 'collection_verified' && hasOnChainMintProof(draft) ? true : null,
+      minted: hasOnChainMintProof(draft),
       tokenStandard: null,
       draft,
     });

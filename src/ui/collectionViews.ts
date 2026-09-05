@@ -9,7 +9,7 @@ import type { SolanaNetwork } from '../solana/config';
 import { nextIpfsGatewaySrc, normalizeAssetUri } from '../solana/assetUri';
 import type { StudioCapacityView } from '../studio/capacity';
 import type { StudioDefaults, StudioDraft } from '../studio/types';
-import { collectionItemStatusLabel, draftStatusLabel, isNumberLocked } from '../studio/types';
+import { collectionItemStatusLabel, draftStatusLabel, hasOnChainMintProof, isNumberLocked } from '../studio/types';
 import type { StudioNumbering } from '../studio/numbering';
 import { formatStudioItemNumber, previewStudioNames } from '../studio/numbering';
 import { canMintStudioDraft } from '../studio/itemMint';
@@ -408,13 +408,17 @@ export function renderManagerItemListMarkup(
         alt: `${item.name} artwork`,
       });
       const source = item.kind === 'on-chain' ? 'On-chain item' : 'Local draft';
-      const minted = item.minted ? '<span class="nft-card-meta">Minted</span>' : '<span class="nft-card-meta">Prepared</span>';
+      const minted = item.kind === 'on-chain' || item.minted
+        ? '<span class="nft-card-meta">Minted</span>'
+        : item.draft?.status === 'failed'
+          ? '<span class="nft-card-meta">Failed</span>'
+          : '<span class="nft-card-meta">Prepared</span>';
       const verified =
         item.collectionVerified === true
           ? '<span class="nft-badge">Verified</span>'
-          : item.collectionVerified === false
+          : item.kind === 'on-chain' && item.collectionVerified === false
             ? '<span class="nft-card-meta">Not verified</span>'
-            : item.minted
+            : item.kind === 'on-chain'
               ? '<span class="nft-card-meta">Verified status unknown</span>'
               : '';
       const explorer =
@@ -422,9 +426,12 @@ export function renderManagerItemListMarkup(
           ? `<a class="ghost-btn nft-card-view" href="${escapeHtml(getExplorerNftUrl(network, item.mintAddress))}" target="_blank" rel="noopener noreferrer">View</a>`
           : '';
       const draft = item.draft;
-      const canEdit = Boolean(draft && !isNumberLocked(draft.status) && item.kind === 'local-draft');
+      const draftLocked = Boolean(
+        draft && isNumberLocked(draft.status) && hasOnChainMintProof(draft)
+      );
+      const canEdit = Boolean(draft && !draftLocked && item.kind === 'local-draft');
       const alreadyVerifiedMinted =
-        item.minted && item.collectionVerified === true;
+        item.kind === 'on-chain' && item.minted && item.collectionVerified === true;
       const canMint = Boolean(
         draft && !mintBlocked && !alreadyVerifiedMinted && canMintStudioDraft(draft)
       );
@@ -442,7 +449,7 @@ export function renderManagerItemListMarkup(
         : '';
 
       return `
-        <article class="nft-card studio-draft-card studio-item-card${item.kind === 'on-chain' ? ' is-locked' : ''}" ${draft ? `data-draft-id="${escapeHtml(draft.id)}"` : ''}>
+        <article class="nft-card studio-draft-card studio-item-card${item.kind === 'on-chain' || draftLocked ? ' is-locked' : ''}" ${draft ? `data-draft-id="${escapeHtml(draft.id)}"` : ''}>
           ${artwork}
           <div class="nft-card-body studio-draft-copy">
             <strong>${escapeHtml(item.name)}</strong>
