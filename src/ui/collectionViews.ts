@@ -15,6 +15,7 @@ import { formatStudioItemNumber, previewStudioNames } from '../studio/numbering'
 import { canMintStudioDraft } from '../studio/itemMint';
 import type { ResolvedDraftMetadata } from '../studio/resolve';
 import type { ManagerListItem } from '../studio/resume';
+import { COLLECTION_INDEXING_WAIT_LABEL } from '../studio/resume';
 import { COLLECTION_ITEM_DISCOVERY_FAILURE_MESSAGE } from '../solana/discoverCollectionItems';
 
 export function renderCollectionPreviewMarkup(model: {
@@ -408,13 +409,22 @@ export function renderManagerItemListMarkup(
         alt: `${item.name} artwork`,
       });
       const source = item.kind === 'on-chain' ? 'On-chain item' : 'Local draft';
-      const minted = item.kind === 'on-chain' || item.minted
+      const draft = item.draft;
+      const awaitingIndexing = Boolean(
+        item.kind === 'local-draft' &&
+        draft &&
+        isNumberLocked(draft.status) &&
+        hasOnChainMintProof(draft)
+      );
+      const minted = item.kind === 'on-chain'
         ? '<span class="nft-card-meta">Minted</span>'
-        : item.draft?.status === 'failed'
-          ? '<span class="nft-card-meta">Failed</span>'
-          : '<span class="nft-card-meta">Prepared</span>';
+        : awaitingIndexing
+          ? `<span class="nft-card-meta">${COLLECTION_INDEXING_WAIT_LABEL}</span>`
+          : item.draft?.status === 'failed'
+            ? '<span class="nft-card-meta">Failed</span>'
+            : '<span class="nft-card-meta">Prepared</span>';
       const verified =
-        item.collectionVerified === true
+        item.kind === 'on-chain' && item.collectionVerified === true
           ? '<span class="nft-badge">Verified</span>'
           : item.kind === 'on-chain' && item.collectionVerified === false
             ? '<span class="nft-card-meta">Not verified</span>'
@@ -425,7 +435,6 @@ export function renderManagerItemListMarkup(
         item.mintAddress
           ? `<a class="ghost-btn nft-card-view" href="${escapeHtml(getExplorerNftUrl(network, item.mintAddress))}" target="_blank" rel="noopener noreferrer">View</a>`
           : '';
-      const draft = item.draft;
       const draftLocked = Boolean(
         draft && isNumberLocked(draft.status) && hasOnChainMintProof(draft)
       );

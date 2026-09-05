@@ -128,6 +128,18 @@ export function digitalAssetToExistingNftSnapshot(asset: DigitalAsset): Existing
   };
 }
 
+export type MintAccountPresence = 'exists' | 'missing' | 'unknown';
+
+export function classifyMintAccountLookupError(error: unknown): Exclude<MintAccountPresence, 'exists'> {
+  const text = error instanceof Error ? `${error.name} ${error.message}` : String(error);
+
+  if (/account not found|not found at|does not exist|AccountNotFound|unexpected account/i.test(text)) {
+    return 'missing';
+  }
+
+  return 'unknown';
+}
+
 export async function fetchExistingNftSnapshot(
   network: SolanaNetwork,
   mintAddress: string

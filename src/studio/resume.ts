@@ -17,6 +17,15 @@ import { collectionStudioKey } from './persistence';
 import type { StudioDefaults, StudioDraft, StudioSettings } from './types';
 import { isNumberLocked, isPreparedDraft, hasOnChainMintProof } from './types';
 
+export const COLLECTION_INDEXING_WAIT_LABEL = 'Mint submitted / Waiting for on-chain indexing';
+
+export type MintAccountPresence = 'exists' | 'missing' | 'unknown';
+
+export type RecoverDraftOptions = {
+  now?: number;
+  mintAccountPresence?: (mint: string) => MintAccountPresence;
+};
+
 export function networkDisplayName(network: SolanaNetwork): 'Mainnet' | 'Devnet' {
   return network === 'mainnet' ? 'Mainnet' : 'Devnet';
 }
@@ -203,17 +212,66 @@ export function discoveredItemCorroboratesDraft(
   });
 }
 
+function resolveRecoverOptions(
+  nowOrOptions: number | RecoverDraftOptions | undefined
+): { now: number; mintAccountPresence: RecoverDraftOptions['mintAccountPresence'] } {
+  if (typeof nowOrOptions === 'number' || nowOrOptions === undefined) {
+    return {
+      now: typeof nowOrOptions === 'number' ? nowOrOptions : Date.now(),
+      mintAccountPresence: undefined,
+    };
+  }
+
+  return {
+    now: nowOrOptions.now ?? Date.now(),
+    mintAccountPresence: nowOrOptions.mintAccountPresence,
+  };
+}
+
+function draftAwaitingIndexing(draft: StudioDraft, now: number): StudioDraft {
+  if (draft.status === 'mint_submitted' && hasOnChainMintProof(draft)) {
+    return draft;
+  }
+
+  return {
+    ...draft,
+    status: 'mint_submitted',
+    updatedAt: now,
+  };
+}
+
+export function draftAwaitingCollectionIndexing(
+  draft: Pick<StudioDraft, 'status' | 'mintAddress' | 'mintSignature' | 'number' | 'name'>,
+  discovered: readonly DiscoveredCollectionItem[]
+): boolean {
+  return (
+    isNumberLocked(draft.status) &&
+    hasOnChainMintProof(draft) &&
+    !discoveredItemCorroboratesDraft(draft, discovered)
+  );
+}
+
 export function recoverDraftAgainstDiscoveredItems(
   draft: StudioDraft,
   discovered: readonly DiscoveredCollectionItem[],
-  now = Date.now()
+  nowOrOptions: number | RecoverDraftOptions = Date.now()
 ): StudioDraft {
+  const { now, mintAccountPresence } = resolveRecoverOptions(nowOrOptions);
+
   if (discoveredItemCorroboratesDraft(draft, discovered)) {
     return draft;
   }
 
   if (!hasOnChainMintProof(draft) && !isNumberLocked(draft.status)) {
     return draft;
+  }
+
+  const mint = draft.mintAddress?.trim() || '';
+  const presence = mint && mintAccountPresence ? mintAccountPresence(mint) : null;
+  const signatureOnlyProof = !mint && Boolean(draft.mintSignature?.trim());
+
+  if (presence === 'exists' || presence === 'unknown' || signatureOnlyProof) {
+    return draftAwaitingIndexing(draft, now);
   }
 
   const staleMintAddress = draft.mintAddress ?? draft.staleMintAddress ?? null;
@@ -243,9 +301,9 @@ export function recoverDraftAgainstDiscoveredItems(
 export function recoverDraftsAgainstDiscoveredItems(
   drafts: readonly StudioDraft[],
   discovered: readonly DiscoveredCollectionItem[],
-  now = Date.now()
+  nowOrOptions: number | RecoverDraftOptions = Date.now()
 ): StudioDraft[] {
-  return drafts.map((draft) => recoverDraftAgainstDiscoveredItems(draft, discovered, now));
+  return drafts.map((draft) => recoverDraftAgainstDiscoveredItems(draft, discovered, nowOrOptions));
 }
 
 export function draftRecoveryChanged(before: StudioDraft, after: StudioDraft): boolean {
@@ -381,10 +439,13 @@ export function mergeManagerListItems(params: {
   drafts: readonly StudioDraft[];
   artworkPreviewUrls?: ReadonlyMap<string, string>;
   discoveryOk?: boolean;
+  mintAccountPresence?: (mint: string) => MintAccountPresence;
 }): ManagerListItem[] {
   const drafts =
     params.discoveryOk === true
-      ? recoverDraftsAgainstDiscoveredItems(params.drafts, params.discovered)
+      ? recoverDraftsAgainstDiscoveredItems(params.drafts, params.discovered, {
+          mintAccountPresence: params.mintAccountPresence,
+        })
       : params.drafts;
   const draftsByMint = new Map(
     drafts
@@ -425,7 +486,7 @@ export function mergeManagerListItems(params: {
       mintAddress: draft.mintAddress,
       metadataUri: null,
       imageUri: params.artworkPreviewUrls?.get(draft.id) ?? null,
-      collectionVerified: draft.status === 'collection_verified' && hasOnChainMintProof(draft) ? true : null,
+      collectionVerified: null,
       minted: hasOnChainMintProof(draft),
       tokenStandard: null,
       draft,

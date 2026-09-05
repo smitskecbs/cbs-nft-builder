@@ -10,6 +10,7 @@ import { defaultStudioNumbering } from './numbering';
 import { collectionStudioKey, createMemoryStudioStore } from './persistence';
 import {
   addItemDraftToExistingCollection,
+  COLLECTION_INDEXING_WAIT_LABEL,
   mergeManagerListItems,
   recoverDraftAgainstDiscoveredItems,
 } from './resume';
@@ -19,6 +20,7 @@ import {
   type StudioDraft,
 } from './types';
 import { renderManagerItemListMarkup } from '../ui/collectionViews';
+import { classifyMintAccountLookupError } from '../solana/collectionOnChain';
 import { COLLECTION_ITEM_DISCOVERY_METHOD } from '../solana/discoverCollectionItems';
 
 const COLLECTION = '3M6W1vqH7c7gNdh7moLcN3HTcCffBn8ohVrx9aZFRGG2';
@@ -617,5 +619,105 @@ describe('recover stale local mint proof against collection discovery', () => {
     expect(loaded.status).toBe('minted');
     expect(recovered.status).toBe('failed');
     expect(canMintStudioDraft(recovered)).toBe(true);
+  });
+
+  it('keeps a DAS-delayed successful mint waiting instead of showing Mint or Verified', () => {
+    const minted025 = normalizeStudioDraft(
+      draft({
+        id: 'draft-025',
+        number: 25,
+        name: 'ManGo Pixel #025',
+        status: 'collection_verified',
+        mintAddress: 'Real025Mint111111111111111111111111111111',
+        mintSignature:
+          '5Real025TxSig111111111111111111111111111111111111111111111111111111111111111111111111111',
+        artwork: { name: '025.png', type: 'image/png', size: 24 },
+      })
+    );
+    const recovered = recoverDraftAgainstDiscoveredItems(minted025, discovery().items, {
+      now: 42,
+      mintAccountPresence: () => 'exists',
+    });
+
+    expect(recovered.status).toBe('mint_submitted');
+    expect(recovered.mintAddress).toBe(minted025.mintAddress);
+    expect(recovered.mintSignature).toBe(minted025.mintSignature);
+    expect(hasOnChainMintProof(recovered)).toBe(true);
+    expect(canMintStudioDraft(recovered)).toBe(false);
+
+    const rows = mergeManagerListItems({
+      discovered: discovery().items,
+      drafts: [minted025],
+      discoveryOk: true,
+      mintAccountPresence: () => 'exists',
+    });
+    const html = renderManagerItemListMarkup(rows, { digitCount: 3, network: 'mainnet' });
+    const waiting = rows.find((row) => row.name === 'ManGo Pixel #025');
+
+    expect(waiting?.kind).toBe('local-draft');
+    expect(waiting?.collectionVerified).not.toBe(true);
+    expect(html).toContain(COLLECTION_INDEXING_WAIT_LABEL);
+    expect(html).not.toContain('Mint #025');
+    expect(html).not.toContain('data-draft-action="edit"');
+  });
+
+  it('does not recover a mint to failed when on-chain lookup is unknown', () => {
+    const minted025 = normalizeStudioDraft(
+      draft({
+        id: 'draft-025',
+        number: 25,
+        name: 'ManGo Pixel #025',
+        status: 'minted',
+        mintAddress: 'Real025Mint111111111111111111111111111111',
+        mintSignature: '5sig',
+      })
+    );
+    const recovered = recoverDraftAgainstDiscoveredItems(minted025, discovery().items, {
+      mintAccountPresence: () => 'unknown',
+    });
+
+    expect(recovered.status).toBe('mint_submitted');
+    expect(recovered.mintAddress).toBe(minted025.mintAddress);
+    expect(canMintStudioDraft(recovered)).toBe(false);
+  });
+
+  it('makes a DAS-confirmed #025 the authoritative on-chain Verified item without Mint', () => {
+    const minted025 = normalizeStudioDraft(
+      draft({
+        id: 'draft-025',
+        number: 25,
+        name: 'ManGo Pixel #025',
+        status: 'mint_submitted',
+        mintAddress: 'Real025Mint111111111111111111111111111111',
+        mintSignature: '5sig',
+      })
+    );
+    const items = [
+      ...discovery().items,
+      discovered('ManGo Pixel #025', 'Real025Mint111111111111111111111111111111', 25),
+    ];
+    const rows = mergeManagerListItems({
+      discovered: items,
+      drafts: [minted025],
+      discoveryOk: true,
+      mintAccountPresence: () => 'exists',
+    });
+    const html = renderManagerItemListMarkup(rows, { digitCount: 3, network: 'mainnet' });
+    const confirmed = rows.find((row) => row.name === 'ManGo Pixel #025');
+
+    expect(rows.filter((row) => row.name === 'ManGo Pixel #025')).toHaveLength(1);
+    expect(confirmed?.kind).toBe('on-chain');
+    expect(confirmed?.collectionVerified).toBe(true);
+    expect(confirmed?.mintAddress).toBe('Real025Mint111111111111111111111111111111');
+    expect(html).toContain('On-chain item');
+    expect(html).toContain('Verified');
+    expect(html).toContain('>View<');
+    expect(html).not.toContain('Mint #025');
+    expect(html).not.toContain(COLLECTION_INDEXING_WAIT_LABEL);
+  });
+
+  it('treats account-not-found lookup errors as missing mints', () => {
+    expect(classifyMintAccountLookupError(new Error('Account not found at mint'))).toBe('missing');
+    expect(classifyMintAccountLookupError(new Error('network down'))).toBe('unknown');
   });
 });

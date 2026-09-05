@@ -528,7 +528,7 @@ export function renderAppMarkup(): string {
               Mint this item
             </button>
           </div>
-          <p class="helper-text">Minting is one item at a time. There is no Mint all action.</p>
+          <p class="helper-text">Mint saves the current form first, then asks your wallet to sign. Save draft keeps a local copy without minting. Minting is one item at a time. There is no Mint all action.</p>
         </form>
         <details id="studioAdvancedDetails" class="advanced-details studio-advanced">
           <summary>Advanced details</summary>

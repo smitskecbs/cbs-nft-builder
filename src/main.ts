@@ -28,6 +28,7 @@ import {
 import {
   fetchCollectionOnChain,
   fetchExistingNftSnapshot,
+  classifyMintAccountLookupError,
   type OnChainCollectionView,
 } from './solana/collectionOnChain';
 import {
@@ -104,19 +105,18 @@ import {
 import { copyDonationAddress } from './support/donation';
 import { studioCapacityView } from './studio/capacity';
 import { defaultStudioDefaults } from './studio/defaults';
+import { buildSavedCollectionItemDraft, shouldAutoSaveBeforeMint } from './studio/saveItemDraft';
 import {
   applyDraftEditorValues,
   inheritedDraftName,
   resolveDraftMetadata,
 } from './studio/resolve';
 import {
-  createStudioDraft,
   draftStatusAfterMintSend,
   importFilesAsDrafts,
   markDraftMintOutcome,
   removeDraft,
   reorderPreparedDrafts,
-  updateDraftFields,
   usedNumbersFromDraftsAndMinted,
 } from './studio/drafts';
 import { classifyArtworkFiles, collectArtworkFiles } from './studio/importArtwork';
@@ -146,6 +146,7 @@ import {
   cachedItemsFromDiscovered,
   collectionFromSnapshot,
   collectionProgress,
+  discoveredItemCorroboratesDraft,
   draftRecoveryChanged,
   emptyCollectionDiscovery,
   mergeManagerListItems,
@@ -156,6 +157,7 @@ import {
   snapshotFromCollection,
   usedNumbersForContinue,
   wrongNetworkCollectionMessage,
+  type MintAccountPresence,
 } from './studio/resume';
 import {
   applyCollectionStudioPane,
@@ -1171,6 +1173,15 @@ async function handleDraftAction(action: string, draftId: string, pending: boole
       return;
     }
 
+    if (shouldAutoSaveBeforeMint(editingDraftIdInput.value, draftId)) {
+      const saved = await saveCurrentItemDraft({ announce: false, render: false });
+      if (!saved.ok) {
+        return;
+      }
+      await mintCollectionDraftById(saved.draft.id);
+      return;
+    }
+
     await mintCollectionDraftById(draftId);
     return;
   }
@@ -1437,8 +1448,35 @@ async function renderCollectionManager(): Promise<void> {
   }
 
   await loadStudioDraftsForActiveCollection();
+  let mintAccountPresence: ((mint: string) => MintAccountPresence) | undefined;
   if (lastItemDiscovery?.ok) {
-    const recovered = recoverDraftsAgainstDiscoveredItems(studioDrafts, lastItemDiscovery.items);
+    const discoveredItems = lastItemDiscovery.items;
+    const presenceByMint = new Map<string, MintAccountPresence>();
+    const lookups = studioDrafts
+      .filter(
+        (draft) =>
+          Boolean(draft.mintAddress?.trim()) &&
+          (hasOnChainMintProof(draft) || isNumberLocked(draft.status)) &&
+          !discoveredItemCorroboratesDraft(draft, discoveredItems)
+      )
+      .map(async (draft) => {
+        const mint = draft.mintAddress?.trim();
+        if (!mint || !activeCollection) {
+          return;
+        }
+
+        try {
+          await fetchExistingNftSnapshot(activeCollection.network, mint);
+          presenceByMint.set(mint, 'exists');
+        } catch (error) {
+          presenceByMint.set(mint, classifyMintAccountLookupError(error));
+        }
+      });
+    await Promise.all(lookups);
+    mintAccountPresence = (mint) => presenceByMint.get(mint) ?? 'missing';
+    const recovered = recoverDraftsAgainstDiscoveredItems(studioDrafts, discoveredItems, {
+      mintAccountPresence,
+    });
     const changed = recovered.filter((draft, index) =>
       draftRecoveryChanged(studioDrafts[index], draft)
     );
@@ -1479,6 +1517,7 @@ async function renderCollectionManager(): Promise<void> {
     drafts: studioDrafts,
     artworkPreviewUrls: studioDraftPreviewUrls,
     discoveryOk: lastItemDiscovery?.ok === true,
+    mintAccountPresence,
   });
 
   collectionManager.hidden = false;
@@ -2281,10 +2320,13 @@ studioFolderInput.addEventListener('change', () => {
 bindDropzone(pendingDraftDropzone, pendingDraftArtworkInput, true);
 bindDropzone(studioDraftDropzone, studioArtworkInput, false);
 
-async function saveCurrentItemDraft(): Promise<void> {
+async function saveCurrentItemDraft(options: {
+  announce?: boolean;
+  render?: boolean;
+} = {}): Promise<{ ok: true; draft: StudioDraft } | { ok: false }> {
   if (!activeCollection) {
     setError('Open a collection before saving a draft.');
-    return;
+    return { ok: false };
   }
 
   const numbering = numberingFromCollection(activeCollection);
@@ -2292,7 +2334,7 @@ async function saveCurrentItemDraft(): Promise<void> {
 
   if (!numberingCheck.ok) {
     setError(numberingCheck.error);
-    return;
+    return { ok: false };
   }
 
   const file = collectionItemArtworkInput.files?.[0] ?? null;
@@ -2302,7 +2344,7 @@ async function saveCurrentItemDraft(): Promise<void> {
 
   if (file && !artwork) {
     setError(classifyArtworkFiles([file]).rejected[0]?.error ?? 'Artwork is not supported.');
-    return;
+    return { ok: false };
   }
 
   const name = requireElement<HTMLInputElement>('#collectionItemName').value.trim();
@@ -2314,81 +2356,54 @@ async function saveCurrentItemDraft(): Promise<void> {
 
   if (!attributes.ok) {
     setError(attributes.error);
-    return;
+    return { ok: false };
   }
 
-  const defaults = defaultsFromCollection(activeCollection);
-  const existing = studioDrafts.find((draft) => draft.id === editingDraftIdInput.value);
-
-  if (existing) {
-    const withFields = applyDraftEditorValues(existing, defaults, numberingCheck.value, {
-      name,
-      description,
-      externalUrl,
-      attributes: attributes.attributes,
-    });
-    const updated = updateDraftFields(withFields, {
-      artwork: artwork ?? existing.artwork,
-    });
-
-    if ('error' in updated) {
-      setError(updated.error);
-      return;
-    }
-
-    await persistDraft(updated, file);
-    selectedDraftId = updated.id;
-    await renderCollectionManager();
-    setStatus(`Draft saved: ${updated.name}. Nothing was uploaded or minted.`);
-    return;
-  }
-
-  if (!lastItemDiscovery?.ok) {
-    setError(lastItemDiscovery?.error ?? COLLECTION_ITEM_DISCOVERY_FAILURE_MESSAGE);
-    return;
-  }
-  const number = nextNumberForExistingCollection(
-    activeCollection.items,
-    studioDrafts,
-    numberingCheck.value,
-    lastItemDiscovery.items
-  );
-
-  if (number === null) {
-    setError(
-      `CBS planned capacity of ${numberingCheck.value.plannedCapacity} items has been reached. This is not an on-chain maximum.`
-    );
-    return;
-  }
-
-  const draft = createStudioDraft({
-    network: activeCollection.network,
-    collectionMint: activeCollection.mint,
-    collectionKey: activeCollectionKey() ?? pendingCollectionKey(),
-    number,
+  const saved = buildSavedCollectionItemDraft({
+    collection: activeCollection,
+    existingDrafts: studioDrafts,
+    existingDraft: studioDrafts.find((draft) => draft.id === editingDraftIdInput.value) ?? null,
     numbering: numberingCheck.value,
     defaults: defaultsFromCollection(activeCollection),
-    artwork,
-    sortIndex: studioDrafts.length,
-  });
-  const named = applyDraftEditorValues(draft, defaults, numberingCheck.value, {
+    discovery: lastItemDiscovery,
     name,
     description,
     externalUrl,
     attributes: attributes.attributes,
+    artwork,
   });
-  const withArtwork = updateDraftFields(named, { artwork });
 
-  if ('error' in withArtwork) {
-    setError(withArtwork.error);
+  if (!saved.ok) {
+    setError(saved.error);
+    return { ok: false };
+  }
+
+  if (!saved.unchanged) {
+    await persistDraft(saved.draft, file);
+  }
+  await loadStudioDraftsForActiveCollection();
+  const persisted = studioDrafts.find((draft) => draft.id === saved.draft.id) ?? saved.draft;
+  selectedDraftId = persisted.id;
+  editingDraftIdInput.value = persisted.id;
+
+  if (options.render !== false) {
+    await renderCollectionManager();
+  }
+
+  if (options.announce !== false) {
+    setStatus(`Draft saved: ${persisted.name}. Nothing was uploaded or minted.`);
+  }
+
+  return { ok: true, draft: persisted };
+}
+
+async function mintCurrentItemForm(): Promise<void> {
+  const saved = await saveCurrentItemDraft({ announce: false, render: false });
+  if (!saved.ok) {
     return;
   }
 
-  await persistDraft(withArtwork, file);
-  selectedDraftId = withArtwork.id;
-  editingDraftIdInput.value = withArtwork.id;
-  await renderCollectionManager();
-  setStatus(`Draft saved: ${withArtwork.name}. Nothing was uploaded or minted.`);
+  await mintCollectionDraftById(saved.draft.id);
 }
 
 async function mintCollectionDraftById(draftId: string): Promise<void> {
@@ -2609,7 +2624,7 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
     selectedDraftId = null;
     editingDraftIdInput.value = '';
     collectionStudioPane = 'gallery';
-    await renderCollectionManager();
+    await refreshActiveCollectionFromChain();
     setStatus(`${prepared.name} minted in this collection. ${shortAddress(minted.mintAddress)}`);
     showActionPopup('NFT created', `${prepared.name} was minted.`, 'success');
     hideActionPopup(1600);
@@ -2636,7 +2651,7 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
         })
       );
       await persistStudioSnapshot();
-      await renderCollectionManager();
+      await refreshActiveCollectionFromChain();
       setError(
         'The NFT was minted, but saving local status failed. Do not mint this item again. Check the explorer.'
       );
@@ -2665,14 +2680,7 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
 
 collectionItemForm.addEventListener('submit', (event) => {
   event.preventDefault();
-  const draftId = editingDraftIdInput.value.trim();
-
-  if (!draftId) {
-    setError('Use Mint #001 on a prepared item. Each button mints only that item.');
-    return;
-  }
-
-  void mintCollectionDraftById(draftId);
+  void mintCurrentItemForm();
 });
 
 openCollectionButton.addEventListener('click', () => {
