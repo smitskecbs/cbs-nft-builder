@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { TokenStandard } from '@metaplex-foundation/mpl-token-metadata';
 
 import {
+  AUTO_OPEN_LAST_COLLECTION,
+  DEFAULT_COLLECTION_DESCRIPTION,
+  DEFAULT_COLLECTION_ITEM_PREFIX,
+  DEFAULT_COLLECTION_NAME,
   MAX_COLLECTION_ITEMS,
   SIZE_CAP_IS_ON_CHAIN,
 } from './collection/constants';
@@ -11,6 +15,7 @@ import {
   canAllocateItemNumber,
   extractItemNumberFromName,
   formatCollectionItemNumber,
+  itemPrefixFromCollectionName,
   nextAvailableItemNumber,
 } from './collection/numbering';
 import {
@@ -273,15 +278,65 @@ describe('builder primary navigation markup', () => {
     expect(html).toContain('data-asset-type="nft"');
     expect(html).toContain('data-asset-type="create-collection"');
     expect(html).toContain('data-asset-type="manage-collection"');
+    expect(html).toContain('What do you want to create?');
+    expect(html).toContain('Mint one standalone NFT');
     expect(html).toContain('Create one unique NFT.');
     expect(html).toContain('This creates the cover of your collection.');
-    expect(html).toContain('Open a collection');
+    expect(html).toContain('Open another collection');
+    expect(html).toContain('Collection address');
+    expect(html).toContain('Your collections');
+    expect(html).toContain('Connect your wallet to find collections you manage, or paste a collection address below.');
+    expect(html).toContain('Open collection');
+    expect(html).toContain('Solana Mainnet');
+    expect(html).toContain('option value="mainnet" selected');
+    expect(html).toContain('id="developerNetworkControls" class="developer-network-controls" hidden');
     expect(html).toContain('coming soon');
+    expect(html).toContain('id="homeBrandButton"');
+    expect(html).toContain('id="nftForm" class="hero-card page-section token-form" hidden');
+    expect(html).toContain('id="collectionForm" class="hero-card page-section token-form" hidden');
+    expect(html).toContain('id="recentCollectionsSection" class="hero-card page-section open-collection-card" hidden');
+    expect(html).toContain('class="nft-gallery"');
+    expect(html).toContain('Advanced details');
+    expect(html).not.toContain('class="asset-type-card is-active"');
     expect(html).not.toContain('data-asset-type="sft"');
     expect(html).not.toContain('Metaplex Token Metadata');
     expect(html).not.toContain('value="ManGo Pixel Collection"');
+    expect(html).not.toContain('value="MANGO"');
+    expect(html).not.toContain('value="https://mangomeme.fun"');
+    expect(html).not.toContain('value="ManGo Pixel"');
+    expect(html).not.toContain('MANGO');
+    expect(html).not.toContain('mangomeme.fun');
+    expect(html).not.toContain('ManGo Pixel');
+    expect(html).toContain('id="collectionSymbol"');
+    expect(html).toContain('id="collectionExternalUrl"');
+    expect(html).toContain('id="collectionItemBaseName"');
+    expect(html).toContain('Derived from the collection name');
     expect(html).toContain('id="nftForm"');
     expect(html).toContain('id="collectionForm"');
     expect(html).toContain('id="recentCollectionsSection"');
+    expect(html).toContain('id="yourCollectionsSection"');
+    expect(html).toContain('id="openAnotherCollectionSection"');
+    expect(html).toContain('id="recentCollectionsBlock" class="manage-block" hidden');
+    expect(html).toContain('id="openCollectionMint" type="text" autocomplete="off" spellcheck="false"');
+    expect(html).not.toContain('3M6W1vqH7c7gNdh7moLcN3HTcCffBn8ohVrx9aZFRGG2');
+    expect(html).not.toMatch(/id="openCollectionMint"[^>]*value="/);
+  });
+});
+
+describe('generic collection defaults', () => {
+  it('does not use ManGo as a runtime collection default', () => {
+    expect(DEFAULT_COLLECTION_NAME).toBe('');
+    expect(DEFAULT_COLLECTION_DESCRIPTION).toBe('');
+    expect(DEFAULT_COLLECTION_ITEM_PREFIX).toBe('');
+    expect(AUTO_OPEN_LAST_COLLECTION).toBe(false);
+  });
+});
+
+describe('generic collection item prefix', () => {
+  it('derives a neutral item base name from the collection name', () => {
+    expect(itemPrefixFromCollectionName('My Cats Collection')).toBe('My Cats');
+    expect(itemPrefixFromCollectionName('ManGo Pixel Collection')).toBe('ManGo Pixel');
+    expect(itemPrefixFromCollectionName('Space Apes')).toBe('Space Apes');
+    expect(itemPrefixFromCollectionName('')).toBe('Item');
   });
 });

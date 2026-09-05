@@ -1,4 +1,5 @@
 import { escapeHtml, shortAddress } from './html';
+import { toPinataGatewayUrl } from '../metadata/buildNftMetadata';
 import { getExplorerNftUrl, getExplorerTxUrl } from '../solana/explorer';
 import { INDEXING_NOTICE } from '../solana/mintResult';
 import { PLANNED_SIZE_NOT_ON_CHAIN_NOTE } from '../collection/constants';
@@ -132,6 +133,36 @@ export function renderNumberingPreviewMarkup(numbering: StudioNumbering): string
   return `<p class="helper-text">Name preview: ${escapeHtml(names.join(' · '))}</p>`;
 }
 
+function compactMint(address: string): string {
+  if (address.length <= 12) {
+    return address;
+  }
+
+  return `${address.slice(0, 5)}…${address.slice(-5)}`;
+}
+
+function looksLikeImageUrl(uri: string): boolean {
+  const path = uri.split('?')[0].toLowerCase();
+  return /\.(png|jpe?g|gif|webp|svg)$/.test(path);
+}
+
+function toDisplayImageUrl(uri: string | null | undefined): string | null {
+  if (!uri) {
+    return null;
+  }
+
+  const trimmed = uri.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.startsWith('ipfs://')) {
+    return toPinataGatewayUrl(trimmed);
+  }
+
+  return trimmed;
+}
+
 export function renderCollectionManagerMarkup(params: {
   cache: CachedCollection;
   onChain: OnChainCollectionView | null;
@@ -150,53 +181,86 @@ export function renderCollectionManagerMarkup(params: {
   const numberingBlocked = params.numberingBlocked === true;
   const mintedLabel = params.mintedCount === null ? '—' : String(params.mintedCount);
   const verifiedLabel = params.verifiedCount === null ? '—' : String(params.verifiedCount);
+  const nftCountLabel =
+    params.mintedCount === 1 ? '1 NFT' : `${mintedLabel} NFTs`;
   const discoveryNote = numberingBlocked
     ? `<p class="warning-box">${escapeHtml(params.discoveryError || COLLECTION_ITEM_DISCOVERY_FAILURE_MESSAGE)}</p>`
     : '';
   const addDisabled = numberingBlocked ? 'disabled' : '';
-  const nextLine = numberingBlocked
-    ? 'Next item numbering is disabled until collection items are loaded.'
-    : `Next item: ${escapeHtml(params.nextNumberLabel)}. Mint one prepared item at a time. There is no Mint all action.`;
+  const nextName =
+    numberingBlocked || params.nextNumberLabel === 'disabled'
+      ? 'Numbering paused'
+      : params.nextNumberLabel.startsWith('#')
+        ? `${params.cache.itemNamePrefix} ${params.nextNumberLabel}`
+        : params.nextNumberLabel;
+  const explorerUrl = getExplorerNftUrl(params.cache.network, onChainMint);
+  const coverLetter = (onChainName.trim()[0] || 'C').toUpperCase();
+  const coverImage =
+    params.onChain?.uri && looksLikeImageUrl(params.onChain.uri)
+      ? toDisplayImageUrl(params.onChain.uri)
+      : null;
+  const coverMarkup = coverImage
+    ? `<img class="studio-cover" src="${escapeHtml(coverImage)}" alt="" />`
+    : `<div class="studio-cover" aria-hidden="true">${escapeHtml(coverLetter)}</div>`;
 
   return `
-    <h2>${escapeHtml(params.cache.name)}</h2>
-    <p class="helper-text">Collection created ✓</p>
-    <div class="studio-stats" aria-label="Collection progress">
-      <div class="studio-stat">
-        <span class="studio-stat-label">Prepared</span>
-        <strong>${params.preparedCount}</strong>
-        <span>local drafts</span>
+    <div class="studio-hero">
+      ${coverMarkup}
+      <div class="studio-hero-copy">
+        <h2>${escapeHtml(onChainName)}</h2>
+        <div class="studio-hero-meta">
+          <span class="network-pill">${escapeHtml(network)}</span>
+          <span>${escapeHtml(nftCountLabel)}</span>
+          <span>${escapeHtml(verifiedLabel)} verified</span>
+        </div>
+        <div class="studio-mint-row">
+          <code class="studio-mint">${escapeHtml(compactMint(onChainMint))}</code>
+          <button type="button" class="ghost-btn" id="copyCollectionMint" data-collection-mint="${escapeHtml(onChainMint)}">Copy</button>
+          <a class="ghost-btn" href="${escapeHtml(explorerUrl)}" target="_blank" rel="noopener noreferrer">Explorer</a>
+        </div>
       </div>
-      <div class="studio-stat">
-        <span class="studio-stat-label">Minted</span>
-        <strong>${mintedLabel}</strong>
-        <span>item NFTs</span>
-      </div>
-      <div class="studio-stat">
-        <span class="studio-stat-label">Verified in collection</span>
-        <strong>${verifiedLabel}</strong>
-        <span>linked items</span>
-      </div>
-      <div class="studio-stat">
-        <span class="studio-stat-label">Planned capacity</span>
-        <strong>${params.capacity.plannedCapacity}</strong>
-        <span>CBS planned</span>
-      </div>
+      <button type="button" class="secondary-btn studio-close" id="closeCollectionManager">Close</button>
     </div>
-    <dl class="preview-list">
-      <div><dt>On-chain name</dt><dd>${escapeHtml(onChainName)}</dd></div>
-      <div><dt>Collection mint</dt><dd>${escapeHtml(onChainMint)}</dd></div>
-      <div><dt>Network</dt><dd>${network}</dd></div>
-      <div><dt>Can be updated by</dt><dd>${escapeHtml(shortAddress(authority))}</dd></div>
-      <div><dt>Blockchain maximum</dt><dd>None. Planned size is a local target only.</dd></div>
-    </dl>
-    <p class="helper-text">${escapeHtml(PLANNED_SIZE_NOT_ON_CHAIN_NOTE)}</p>
-    <p class="helper-text">The collection cover is a separate NFT. Collection items are grouped by their collection relationship.</p>
     ${discoveryNote}
-    <p class="helper-text">${nextLine}</p>
-    <div class="studio-manager-actions">
-      <button type="button" class="primary-btn" id="addNftDraftButton" ${addDisabled}>+ Add NFT</button>
-      <button type="button" class="secondary-btn" id="closeCollectionManager">Close collection</button>
+    <button type="button" class="nft-card nft-card-create" id="addNftDraftButton" ${addDisabled}>
+      <span class="nft-card-create-plus" aria-hidden="true">+</span>
+      <strong>Create next NFT</strong>
+      <span>${escapeHtml(nextName)}</span>
+    </button>
+    <div class="studio-tech">
+      <p class="helper-text">Collection created ✓</p>
+      <div class="studio-stats" aria-label="Collection progress">
+        <div class="studio-stat">
+          <span class="studio-stat-label">Prepared</span>
+          <strong>${params.preparedCount}</strong>
+          <span>local drafts</span>
+        </div>
+        <div class="studio-stat">
+          <span class="studio-stat-label">Minted</span>
+          <strong>${mintedLabel}</strong>
+          <span>item NFTs</span>
+        </div>
+        <div class="studio-stat">
+          <span class="studio-stat-label">Verified in collection</span>
+          <strong>${verifiedLabel}</strong>
+          <span>linked items</span>
+        </div>
+        <div class="studio-stat">
+          <span class="studio-stat-label">Planned capacity</span>
+          <strong>${params.capacity.plannedCapacity}</strong>
+          <span>CBS planned</span>
+        </div>
+      </div>
+      <dl class="preview-list">
+        <div><dt>On-chain name</dt><dd>${escapeHtml(onChainName)}</dd></div>
+        <div><dt>Collection mint</dt><dd>${escapeHtml(onChainMint)}</dd></div>
+        <div><dt>Network</dt><dd>${network}</dd></div>
+        <div><dt>Can be updated by</dt><dd>${escapeHtml(shortAddress(authority))}</dd></div>
+        <div><dt>Blockchain maximum</dt><dd>None. Planned size is a local target only.</dd></div>
+      </dl>
+      <p class="helper-text">${escapeHtml(PLANNED_SIZE_NOT_ON_CHAIN_NOTE)}</p>
+      <p class="helper-text">Drafts are local. On-chain items stay on-chain.</p>
+      <p class="helper-text">The collection cover is a separate NFT. Collection items are grouped by their collection relationship.</p>
     </div>
   `;
 }
@@ -211,7 +275,7 @@ export function renderDraftListMarkup(
 ): string {
   if (drafts.length === 0) {
     return options.collectionCreated
-      ? `<p class="helper-text">No prepared drafts yet. Use + Add NFT or import images. This does not create a new collection.</p>`
+      ? `<p class="helper-text">No prepared drafts yet. Use Create next NFT or import images. This does not create a new collection.</p>`
       : `<p class="helper-text">No prepared drafts yet. Import images to create drafts without minting.</p>`;
   }
 
@@ -297,76 +361,74 @@ export function renderManagerItemListMarkup(
   } = {}
 ): string {
   if (items.length === 0) {
-    return `<p class="helper-text">No collection items found yet. Use + Add NFT or import images. This does not create a new collection.</p>`;
+    return `<p class="helper-text nft-gallery-empty">No collection items found yet. Use Create next NFT or import images. This does not create a new collection.</p>`;
   }
 
   const digitCount = options.digitCount ?? 3;
   const network = options.network ?? 'devnet';
   const mintBlocked = options.numberingBlocked === true;
 
-  return `
-    <h3>Items</h3>
-    ${items
-      .map((item) => {
-        const numberLabel =
-          item.number !== null ? formatStudioItemNumber(item.number, digitCount) : '';
-        const artwork = item.imageUri
-          ? `<img class="studio-item-thumb" src="${escapeHtml(item.imageUri)}" alt="${escapeHtml(item.name)} artwork" />`
-          : `<div class="studio-item-thumb studio-item-thumb-empty" aria-hidden="true"></div>`;
-        const source = item.kind === 'on-chain' ? 'On-chain item' : 'Local draft';
-        const minted = item.minted ? '<span>Minted</span>' : '<span>Prepared</span>';
-        const verified =
-          item.collectionVerified === true
-            ? '<span>Verified</span>'
-            : item.collectionVerified === false
-              ? '<span>Not verified</span>'
-              : item.minted
-                ? '<span>Verified status unknown</span>'
-                : '';
-        const mintAddress = item.mintAddress
-          ? `<span>Mint address: ${escapeHtml(item.mintAddress)}</span>`
+  return items
+    .map((item) => {
+      const numberLabel =
+        item.number !== null ? formatStudioItemNumber(item.number, digitCount) : '';
+      const imageUrl = toDisplayImageUrl(item.imageUri);
+      const artwork = imageUrl
+        ? `<img class="nft-card-art" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(item.name)} artwork" />`
+        : `<div class="nft-card-art nft-card-art-empty" aria-hidden="true">${escapeHtml((item.name.trim()[0] || '#').toUpperCase())}</div>`;
+      const source = item.kind === 'on-chain' ? 'On-chain item' : 'Local draft';
+      const minted = item.minted ? '<span class="nft-card-meta">Minted</span>' : '<span class="nft-card-meta">Prepared</span>';
+      const verified =
+        item.collectionVerified === true
+          ? '<span class="nft-badge">Verified</span>'
+          : item.collectionVerified === false
+            ? '<span class="nft-card-meta">Not verified</span>'
+            : item.minted
+              ? '<span class="nft-card-meta">Verified status unknown</span>'
+              : '';
+      const explorer =
+        item.mintAddress
+          ? `<a class="ghost-btn nft-card-view" href="${escapeHtml(getExplorerNftUrl(network, item.mintAddress))}" target="_blank" rel="noopener noreferrer">View</a>`
           : '';
-        const explorer =
-          item.mintAddress
-            ? `<a class="secondary-btn" href="${escapeHtml(getExplorerNftUrl(network, item.mintAddress))}" target="_blank" rel="noopener noreferrer">View on Solscan</a>`
-            : '';
-        const draft = item.draft;
-        const canEdit = Boolean(draft && !isNumberLocked(draft.status) && item.kind === 'local-draft');
-        const canMint = Boolean(draft && !mintBlocked && canMintStudioDraft(draft));
-        const mintButton =
-          canMint && draft
-            ? `<button type="button" class="primary-btn" data-draft-action="mint" data-draft-id="${escapeHtml(draft.id)}">Mint ${escapeHtml(numberLabel || draft.name)}</button>`
-            : '';
-        const editButton = canEdit && draft
-          ? `<button type="button" class="secondary-btn" data-draft-action="edit" data-draft-id="${escapeHtml(draft.id)}">Edit</button>`
+      const draft = item.draft;
+      const canEdit = Boolean(draft && !isNumberLocked(draft.status) && item.kind === 'local-draft');
+      const alreadyVerifiedMinted =
+        item.minted && item.collectionVerified === true;
+      const canMint = Boolean(
+        draft && !mintBlocked && !alreadyVerifiedMinted && canMintStudioDraft(draft)
+      );
+      const mintButton =
+        canMint && draft
+          ? `<button type="button" class="primary-btn" data-draft-action="mint" data-draft-id="${escapeHtml(draft.id)}">Mint ${escapeHtml(numberLabel || draft.name)}</button>`
           : '';
-        const reorder = canEdit && draft
-          ? `<button type="button" class="secondary-btn" data-draft-action="up" data-draft-id="${escapeHtml(draft.id)}">Up</button>
+      const editButton = canEdit && draft
+        ? `<button type="button" class="secondary-btn" data-draft-action="edit" data-draft-id="${escapeHtml(draft.id)}">Edit</button>`
+        : '';
+      const reorder = canEdit && draft
+        ? `<button type="button" class="secondary-btn" data-draft-action="up" data-draft-id="${escapeHtml(draft.id)}">Up</button>
             <button type="button" class="secondary-btn" data-draft-action="down" data-draft-id="${escapeHtml(draft.id)}">Down</button>
             <button type="button" class="secondary-btn" data-draft-action="remove" data-draft-id="${escapeHtml(draft.id)}">Remove</button>`
-          : '';
+        : '';
 
-        return `
-        <article class="studio-draft-card studio-item-card${item.kind === 'on-chain' ? ' is-locked' : ''}" ${draft ? `data-draft-id="${escapeHtml(draft.id)}"` : ''}>
+      return `
+        <article class="nft-card studio-draft-card studio-item-card${item.kind === 'on-chain' ? ' is-locked' : ''}" ${draft ? `data-draft-id="${escapeHtml(draft.id)}"` : ''}>
           ${artwork}
-          <div class="studio-draft-copy">
-            <strong>${escapeHtml(numberLabel ? `${numberLabel} ${item.name}` : item.name)}</strong>
-            <span>${source}</span>
-            ${minted}
+          <div class="nft-card-body studio-draft-copy">
+            <strong>${escapeHtml(item.name)}</strong>
             ${verified}
-            ${mintAddress}
+            <span class="nft-card-meta">${source}</span>
+            ${minted}
           </div>
-          <div class="studio-draft-actions">
+          <div class="nft-card-actions studio-draft-actions">
+            ${explorer}
             ${editButton}
             ${mintButton}
             ${reorder}
-            ${explorer}
           </div>
         </article>
       `;
-      })
-      .join('')}
-  `;
+    })
+    .join('');
 }
 
 export function fieldSourceLabel(isOverride: boolean): string {
@@ -439,9 +501,53 @@ export function renderExistingNftPlanMarkup(plan: ExistingNftAttachPlan): string
   `;
 }
 
+export const YOUR_COLLECTIONS_WALLET_DISCONNECTED =
+  'Connect your wallet to find collections you manage, or paste a collection address below.';
+
+export const YOUR_COLLECTIONS_NONE_FOUND =
+  'No collections found for this wallet.\nYou can still open a collection by address.';
+
+export const YOUR_COLLECTIONS_LOAD_FAILED =
+  'Could not load collections for this wallet. You can still open a collection by address.';
+
+export type ManagedCollectionCard = {
+  mint: string;
+  name: string;
+  imageUri: string | null;
+  network: SolanaNetwork;
+};
+
+export function renderManagedCollectionsMarkup(collections: readonly ManagedCollectionCard[]): string {
+  return collections
+    .map((collection) => {
+      const network = collection.network === 'mainnet' ? 'Mainnet' : 'Devnet';
+      const imageUrl = toDisplayImageUrl(collection.imageUri);
+      const artwork = imageUrl
+        ? `<img class="nft-card-art" src="${escapeHtml(imageUrl)}" alt="" />`
+        : `<div class="nft-card-art nft-card-art-empty" aria-hidden="true">${escapeHtml((collection.name.trim()[0] || 'C').toUpperCase())}</div>`;
+
+      return `
+        <article class="nft-card managed-collection-card">
+          ${artwork}
+          <div class="nft-card-body">
+            <strong>${escapeHtml(collection.name)}</strong>
+            <code class="studio-mint">${escapeHtml(compactMint(collection.mint))}</code>
+            <span class="network-pill">${escapeHtml(network)}</span>
+          </div>
+          <div class="nft-card-actions">
+            <button type="button" class="primary-btn" data-collection-mint="${escapeHtml(collection.mint)}">
+              Open collection
+            </button>
+          </div>
+        </article>
+      `;
+    })
+    .join('');
+}
+
 export function renderRecentCollectionsMarkup(collections: CachedCollection[]): string {
   if (collections.length === 0) {
-    return `<p class="helper-text">No saved collections for this network yet. Create one, or paste a collection address below.</p>`;
+    return '';
   }
 
   return collections

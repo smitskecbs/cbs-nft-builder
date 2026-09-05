@@ -43,6 +43,7 @@ import {
   NFT_BUILDER_LOGO_PATH,
   SOLANA_LOGOMARK_PATH,
 } from './branding';
+import { renderAppMarkup } from './ui/renderApp';
 
 describe('NFT metadata builder', () => {
   it('builds Metaplex-style NFT JSON with ipfs URIs', () => {
@@ -318,6 +319,57 @@ describe('CBS branding and support config', () => {
   });
 });
 
+describe('home and app shell markup', () => {
+  it('starts on home with Create NFT closed and header wallet controls', () => {
+    const html = renderAppMarkup();
+
+    expect(html).toContain('id="appShell" class="app-shell is-home"');
+    expect(html).toContain('id="homeBrandButton"');
+    expect(html).toContain('id="networkSelect"');
+    expect(html).toContain('id="networkBadge"');
+    expect(html).toContain('Solana Mainnet');
+    expect(html).toContain('option value="mainnet" selected');
+    expect(html).toContain('option value="devnet"');
+    expect(html).toContain('id="developerNetworkControls" class="developer-network-controls" hidden');
+    expect(html).not.toContain('option value="devnet" selected');
+    expect(html).toContain('id="connectWallet"');
+    expect(html).toContain('What do you want to create?');
+    expect(html).toContain('Mint one standalone NFT');
+    expect(html).toContain('id="nftForm" class="hero-card page-section token-form" hidden');
+    expect(html).not.toContain('class="session-bar"');
+    expect(html).not.toContain('class="asset-type-card is-active"');
+  });
+
+  it('groups Create NFT and Create next NFT forms without a wizard', () => {
+    const html = renderAppMarkup();
+
+    expect(html).toContain('form-group-artwork');
+    expect(html).toContain('<legend>Details</legend>');
+    expect(html).toContain('<legend>Traits (optional)</legend>');
+    expect(html).toContain('Create this NFT');
+    expect(html).toContain('Short label (optional)');
+    expect(html).toContain('Website for this NFT (optional)');
+    expect(html).toContain('Royalty % you earn on later sales');
+    expect(html).toContain('Keep editable after mint');
+    expect(html).toContain('0% royalty is fine');
+    expect(html).toContain('id="nftSymbol"');
+    expect(html).toContain('id="nftExternalUrl"');
+    expect(html).toContain('id="nftRoyalty"');
+    expect(html).toContain('id="nftMutable"');
+    expect(html).toContain('class="primary-btn mint-action-btn"');
+    expect(html).toContain('id="createCollectionItemButton" type="submit" class="primary-btn mint-action-btn"');
+    expect(html).toContain('Mint this item');
+    expect(html).toContain('id="collectionItemName"');
+    expect(html).toContain('id="collectionItemRoyalty" type="hidden"');
+    expect(html).toContain('id="collectionItemSymbol" type="hidden"');
+    expect(html).toContain('id="collectionItemMutable"');
+    expect(html).toContain('id="saveDraftButton"');
+    expect(html).not.toContain('Review and create NFT');
+    expect(html).not.toContain('Step 1');
+    expect(html).not.toContain('wizard');
+  });
+});
+
 describe('post-mint result', () => {
   const signatureBytes = new Uint8Array([1, 2, 3, 4]);
   const signatureText = formatUmiTransactionSignature(signatureBytes);
@@ -395,6 +447,29 @@ describe('post-mint result', () => {
     expect(mapErrorToUserMessage(new Error('Mint Unavailable'))).not.toMatch(
       /Mint Unavailable/i
     );
+  });
+
+  it('explains a missing local upload server without claiming a mint after submit', () => {
+    expect(
+      mapErrorToUserMessage(
+        new Error(
+          'Artwork upload failed because the local upload service became unavailable. Please restart the NFT Builder and try again.'
+        )
+      )
+    ).toBe(
+      'Artwork upload failed because the local upload service became unavailable. Nothing was minted. Please restart the NFT Builder and try again.'
+    );
+    expect(
+      mapErrorToUserMessage(
+        new Error(
+          'Artwork upload failed because the local upload service became unavailable. Please restart the NFT Builder and try again.'
+        ),
+        { mintTransactionSubmitted: true }
+      )
+    ).toBe(
+      'Artwork upload failed because the local upload service became unavailable. Please restart the NFT Builder and try again.'
+    );
+    expect(mapErrorToUserMessage(new Error('Failed to fetch'))).toBe('Failed to fetch');
   });
 
   it('does not create another NFT when replaying a stored result', () => {

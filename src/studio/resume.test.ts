@@ -80,7 +80,7 @@ function mangoCollection(network: 'devnet' | 'mainnet' = 'mainnet') {
 }
 
 function mintedDrafts(): StudioDraft[] {
-  const numbering = defaultStudioNumbering();
+  const numbering = defaultStudioNumbering({ baseName: 'ManGo Pixel' });
   const imported = importFilesAsDrafts({
     files: [artwork('a.png', 0), artwork('b.png', 1), artwork('c.png', 2), artwork('d.png', 3)],
     mintedNumbers: [],
@@ -107,7 +107,7 @@ describe('collection resume and isolation', () => {
     const collection = mangoCollection('mainnet');
     const snapshot = snapshotFromCollection(
       collection,
-      defaultStudioNumbering(),
+      defaultStudioNumbering({ baseName: 'ManGo Pixel' }),
       defaultStudioDefaults({ symbol: 'MANGO' })
     );
 
@@ -155,7 +155,7 @@ describe('collection resume and isolation', () => {
       selectedSettings: null,
       otherSettings: snapshotFromCollection(
         mangoCollection('mainnet'),
-        defaultStudioNumbering(),
+        defaultStudioNumbering({ baseName: 'ManGo Pixel' }),
         defaultStudioDefaults()
       ),
     });
@@ -173,7 +173,7 @@ describe('collection resume and isolation', () => {
         otherCache: null,
         selectedSettings: snapshotFromCollection(
           mangoCollection('mainnet'),
-          defaultStudioNumbering(),
+          defaultStudioNumbering({ baseName: 'ManGo Pixel' }),
           defaultStudioDefaults()
         ),
         otherSettings: null,
@@ -190,7 +190,7 @@ describe('collection resume and isolation', () => {
     const drafts = mintedDrafts();
     await Promise.all(drafts.map((draft) => store.putDraft(draft)));
     await store.putSettings(
-      snapshotFromCollection(collection, defaultStudioNumbering(), defaultStudioDefaults())
+      snapshotFromCollection(collection, defaultStudioNumbering({ baseName: 'ManGo Pixel' }), defaultStudioDefaults())
     );
 
     const restoredDrafts = await store.getDrafts(collectionStudioKey('mainnet', collection.mint));
@@ -210,7 +210,7 @@ describe('collection resume and isolation', () => {
     const created = addItemDraftToExistingCollection({
       collection,
       existingDrafts: drafts,
-      numbering: defaultStudioNumbering(),
+      numbering: defaultStudioNumbering({ baseName: 'ManGo Pixel' }),
       defaults: defaultStudioDefaults({ symbol: 'MANGO' }),
       discovery: emptyCollectionDiscovery('mainnet'),
       now: 50,
@@ -236,7 +236,7 @@ describe('collection resume and isolation', () => {
       files: [artwork('five.png', 4)],
       mintedNumbers: collection.items.map((item) => item.number),
       existingDrafts: mintedDrafts(),
-      numbering: defaultStudioNumbering(),
+      numbering: defaultStudioNumbering({ baseName: 'ManGo Pixel' }),
       defaults: defaultStudioDefaults(),
       network: 'mainnet',
       collectionMint: collection.mint,
@@ -244,7 +244,7 @@ describe('collection resume and isolation', () => {
       now: 9,
     }).drafts;
 
-    expect(nextNumberForExistingCollection(collection.items, mintedDrafts(), defaultStudioNumbering())).toBe(
+    expect(nextNumberForExistingCollection(collection.items, mintedDrafts(), defaultStudioNumbering({ baseName: 'ManGo Pixel' }))).toBe(
       5
     );
     expect(localOnly[0].number).toBe(5);
@@ -278,7 +278,7 @@ describe('collection resume and isolation', () => {
   it('protects against duplicate mints and stays one-at-a-time without Mint all', () => {
     const minted = mintedDrafts()[0];
     const submitted = markDraftMintOutcome(mintedDrafts()[1], { status: 'mint_submitted' });
-    const numbering = defaultStudioNumbering();
+    const numbering = defaultStudioNumbering({ baseName: 'ManGo Pixel' });
     const defaults = defaultStudioDefaults({ symbol: 'MANGO' });
 
     expect(duplicateMintBlocked(minted).blocked).toBe(true);
@@ -336,7 +336,7 @@ describe('collection resume and isolation', () => {
     expect(html).toContain('Mainnet');
     expect(html).toContain('On-chain name');
     expect(html).toContain('Can be updated by');
-    expect(html).toContain('+ Add NFT');
+    expect(html).toContain('Create next NFT');
   });
 
   it('shows Mainnet or Devnet on Recent Collections', () => {
@@ -354,7 +354,7 @@ describe('collection resume and isolation', () => {
       addItemDraftToExistingCollection({
         collection: mangoCollection('mainnet'),
         existingDrafts: mintedDrafts(),
-        numbering: defaultStudioNumbering(),
+        numbering: defaultStudioNumbering({ baseName: 'ManGo Pixel' }),
         defaults: defaultStudioDefaults(),
         discovery: emptyCollectionDiscovery('mainnet'),
         now: 99,

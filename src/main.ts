@@ -3,6 +3,11 @@ import './style.css';
 
 import { renderAppMarkup } from './ui/renderApp';
 import { requireElement } from './ui/dom';
+import {
+  developerNetworkControlsEnabled,
+  networkBadgeLabel,
+  requestedDeveloperNetwork,
+} from './ui/networkPreference';
 import { renderPreviewMarkup } from './ui/preview';
 import { hideActionPopup, showActionPopup } from './ui/popup';
 import { escapeHtml, shortAddress } from './ui/html';
@@ -26,7 +31,6 @@ import {
   type OnChainCollectionView,
 } from './solana/collectionOnChain';
 import {
-  DEFAULT_COLLECTION_ITEM_PREFIX,
   DEFAULT_DIGIT_COUNT,
   DEFAULT_PLANNED_CAPACITY,
   DEFAULT_START_NUMBER,
@@ -56,11 +60,15 @@ import {
   renderDraftListMarkup,
   renderExistingNftPlanMarkup,
   renderManagerItemListMarkup,
+  renderManagedCollectionsMarkup,
   renderNumberingPreviewMarkup,
   renderRecentCollectionsMarkup,
   renderResolvedItemPreviewMarkup,
   renderStudioDefaultsMarkup,
   fieldSourceLabel,
+  YOUR_COLLECTIONS_LOAD_FAILED,
+  YOUR_COLLECTIONS_NONE_FOUND,
+  YOUR_COLLECTIONS_WALLET_DISCONNECTED,
 } from './ui/collectionViews';
 import {
   NFT_CREATED_HEADING,
@@ -146,10 +154,16 @@ import {
   wrongNetworkCollectionMessage,
 } from './studio/resume';
 import {
+  applyCollectionStudioPane,
+  collectionItemEditorHeading,
+  type CollectionStudioPane,
+} from './studio/itemEditorView';
+import {
   COLLECTION_ITEM_DISCOVERY_FAILURE_MESSAGE,
   discoverCollectionItems,
   type CollectionItemDiscovery,
 } from './solana/discoverCollectionItems';
+import { discoverManagedCollections } from './solana/discoverManagedCollections';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 
@@ -159,7 +173,11 @@ if (!app) {
 
 app.innerHTML = renderAppMarkup();
 
+const appShell = requireElement<HTMLDivElement>('#appShell');
+const homeBrandButton = requireElement<HTMLButtonElement>('#homeBrandButton');
 const networkSelect = requireElement<HTMLSelectElement>('#networkSelect');
+const networkBadge = requireElement<HTMLSpanElement>('#networkBadge');
+const developerNetworkControls = requireElement<HTMLDivElement>('#developerNetworkControls');
 const walletSelect = requireElement<HTMLSelectElement>('#walletSelect');
 const connectButton = requireElement<HTMLButtonElement>('#connectWallet');
 const disconnectButton = requireElement<HTMLButtonElement>('#disconnectWallet');
@@ -182,12 +200,18 @@ const collectionArtworkInput = requireElement<HTMLInputElement>('#collectionArtw
 const collectionArtworkPreview = requireElement<HTMLImageElement>('#collectionArtworkPreview');
 const collectionPreview = requireElement<HTMLDivElement>('#collectionPreview');
 const recentCollectionsSection = requireElement<HTMLElement>('#recentCollectionsSection');
+const recentCollectionsBlock = requireElement<HTMLElement>('#recentCollectionsBlock');
 const recentCollectionsList = requireElement<HTMLDivElement>('#recentCollectionsList');
+const yourCollectionsStatus = requireElement<HTMLParagraphElement>('#yourCollectionsStatus');
+const yourCollectionsList = requireElement<HTMLDivElement>('#yourCollectionsList');
 const openCollectionMint = requireElement<HTMLInputElement>('#openCollectionMint');
 const openCollectionButton = requireElement<HTMLButtonElement>('#openCollectionButton');
 const collectionManager = requireElement<HTMLElement>('#collectionManager');
 const collectionManagerSummary = requireElement<HTMLDivElement>('#collectionManagerSummary');
+const studioGallery = requireElement<HTMLDivElement>('#studioGallery');
 const collectionItemForm = requireElement<HTMLFormElement>('#collectionItemForm');
+const collectionItemEditorTitle = requireElement<HTMLHeadingElement>('#collectionItemEditorTitle');
+const backToCollectionButton = requireElement<HTMLButtonElement>('#backToCollectionButton');
 const collectionItemArtworkInput = requireElement<HTMLInputElement>('#collectionItemArtworkInput');
 const collectionItemArtworkPreview = requireElement<HTMLImageElement>('#collectionItemArtworkPreview');
 const collectionNextNumber = requireElement<HTMLParagraphElement>('#collectionNextNumber');
@@ -209,6 +233,7 @@ const studioFolderButton = requireElement<HTMLButtonElement>('#studioFolderButto
 const studioFolderInput = requireElement<HTMLInputElement>('#studioFolderInput');
 const studioImportStatus = requireElement<HTMLParagraphElement>('#studioImportStatus');
 const studioDraftList = requireElement<HTMLDivElement>('#studioDraftList');
+const studioAdvancedDetails = requireElement<HTMLDetailsElement>('#studioAdvancedDetails');
 const editingDraftIdInput = requireElement<HTMLInputElement>('#editingDraftId');
 const collectionItemAttributeRows = requireElement<HTMLDivElement>('#collectionItemAttributeRows');
 const addCollectionItemAttributeButton = requireElement<HTMLButtonElement>('#addCollectionItemAttribute');
@@ -237,9 +262,10 @@ let selectedWalletId = '';
 let artworkObjectUrl: string | null = null;
 let isBusy = false;
 let lastMintDisplay: MintDisplayModel | null = null;
-type BuilderMode = 'nft' | 'create-collection' | 'manage-collection';
+type BuilderMode = 'home' | 'nft' | 'create-collection' | 'manage-collection';
 
-let builderMode: BuilderMode = 'nft';
+let builderMode: BuilderMode = 'home';
+let managedDiscoverySeq = 0;
 let collectionArtworkObjectUrl: string | null = null;
 let collectionItemArtworkObjectUrl: string | null = null;
 let activeCollection: CachedCollection | null = null;
@@ -250,6 +276,7 @@ let studioStore: StudioStore = getSharedStudioStore();
 let studioDrafts: StudioDraft[] = [];
 let pendingDrafts: StudioDraft[] = [];
 let selectedDraftId: string | null = null;
+let collectionStudioPane: CollectionStudioPane = 'gallery';
 let itemEditorDraftId: string | null = null;
 let itemEditorPending = false;
 let itemEditorArtworkUrl: string | null = null;
@@ -258,7 +285,26 @@ let studioDraftPreviewUrls = new Map<string, string>();
 setWalletNetworkResolver(() => getSelectedNetwork());
 
 function getSelectedNetwork(): SolanaNetwork {
-  return networkSelect.value === 'mainnet' ? 'mainnet' : 'devnet';
+  return networkSelect.value === 'devnet' ? 'devnet' : 'mainnet';
+}
+
+function applyDeveloperNetworkControls(): void {
+  const search = window.location.search;
+  const enabled = developerNetworkControlsEnabled(search, localStorage);
+  developerNetworkControls.hidden = !enabled;
+
+  const requested = requestedDeveloperNetwork(search);
+  if (requested) {
+    networkSelect.value = requested;
+  } else if (!enabled) {
+    networkSelect.value = 'mainnet';
+  }
+}
+
+function updateNetworkBadge(): void {
+  const network = getSelectedNetwork();
+  networkBadge.textContent = networkBadgeLabel(network);
+  networkBadge.dataset.tone = network;
 }
 
 function setStatus(message: string): void {
@@ -281,6 +327,7 @@ function updateNetworkStatus(): void {
     <strong>${copy.label}</strong>
     <span>${copy.detail}</span>
   `;
+  updateNetworkBadge();
 }
 
 function updateMainnetWarning(): void {
@@ -323,6 +370,8 @@ function refreshWalletSelector(): void {
 }
 
 function updateWalletBox(): void {
+  disconnectButton.hidden = !connectedWalletAddress;
+
   if (!connectedWalletAddress) {
     walletBox.textContent = 'No wallet connected';
     connectButton.textContent = 'Connect wallet';
@@ -330,11 +379,10 @@ function updateWalletBox(): void {
   }
 
   walletBox.innerHTML = `
-    <strong>Connected wallet:</strong>
-    <br><br>
-    ${escapeHtml(connectedWalletAddress)}
+    <span class="wallet-connected-label">Connected</span>
+    <code title="${escapeHtml(connectedWalletAddress)}">${escapeHtml(shortAddress(connectedWalletAddress))}</code>
   `;
-  connectButton.textContent = 'Wallet connected';
+  connectButton.textContent = 'Connected';
 }
 
 function clearWalletState(): void {
@@ -431,11 +479,6 @@ function replaceAttributeRows(
   onChange: () => void = () => undefined
 ): void {
   container.innerHTML = '';
-  if (attributes.length === 0) {
-    addAttributeRowTo(container, '', '', onChange);
-    return;
-  }
-
   for (const attribute of attributes) {
     addAttributeRowTo(container, attribute.trait_type, attribute.value, onChange);
   }
@@ -453,8 +496,10 @@ function parsePositiveInt(value: string, fallback: number): number {
 }
 
 function readStudioNumberingFromCreateForm() {
+  const typedBaseName = requireElement<HTMLInputElement>('#collectionItemBaseName').value.trim();
+  const collectionName = requireElement<HTMLInputElement>('#collectionName').value;
   return defaultStudioNumbering({
-    baseName: requireElement<HTMLInputElement>('#collectionItemBaseName').value,
+    baseName: typedBaseName || itemPrefixFromCollectionName(collectionName),
     digitCount: parsePositiveInt(
       requireElement<HTMLInputElement>('#collectionDigitCount').value,
       DEFAULT_DIGIT_COUNT
@@ -549,6 +594,41 @@ function rememberOpenedCollection(collection: CachedCollection): void {
   saveLastOpenedCollectionMint(collection.network, collection.mint);
 }
 
+function syncCollectionStudioPane(itemName?: string): void {
+  applyCollectionStudioPane({
+    pane: collectionStudioPane,
+    gallery: studioGallery,
+    editor: collectionItemForm,
+    extras: studioAdvancedDetails,
+  });
+  collectionManager.classList.toggle('is-editing-item', collectionStudioPane === 'item-editor');
+
+  if (collectionStudioPane !== 'item-editor') {
+    return;
+  }
+
+  const name =
+    itemName?.trim() ||
+    requireElement<HTMLInputElement>('#collectionItemName').value.trim() ||
+    'next NFT';
+  collectionItemEditorTitle.textContent = collectionItemEditorHeading(name);
+}
+
+function revealCollectionItemEditor(itemName: string): void {
+  collectionStudioPane = 'item-editor';
+  syncCollectionStudioPane(itemName);
+  collectionItemForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  collectionItemEditorTitle.focus({ preventScroll: true });
+  collectionItemArtworkInput.focus({ preventScroll: true });
+}
+
+function returnToCollectionGallery(): void {
+  collectionStudioPane = 'gallery';
+  syncCollectionStudioPane();
+  studioGallery.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setStatus('Back to collection. Local drafts stay saved. Nothing was uploaded or minted.');
+}
+
 function bindCollectionManagerActions(): void {
   requireElement<HTMLButtonElement>('#addNftDraftButton').addEventListener('click', () => {
     void addNftDraftToActiveCollection();
@@ -556,6 +636,24 @@ function bindCollectionManagerActions(): void {
   requireElement<HTMLButtonElement>('#closeCollectionManager').addEventListener('click', () => {
     closeOpenedCollection();
   });
+  document.querySelector<HTMLButtonElement>('#copyCollectionMint')?.addEventListener('click', () => {
+    void copyCollectionMint();
+  });
+}
+
+async function copyCollectionMint(): Promise<void> {
+  const button = document.querySelector<HTMLButtonElement>('#copyCollectionMint');
+  const mint = button?.dataset.collectionMint?.trim();
+  if (!mint) {
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(mint);
+    setStatus('Collection address copied.');
+  } catch {
+    setStatus('Collection address is ready to copy from the collection header.');
+  }
 }
 
 function closeOpenedCollection(): void {
@@ -564,11 +662,14 @@ function closeOpenedCollection(): void {
   lastItemDiscovery = null;
   studioDrafts = [];
   selectedDraftId = null;
+  collectionStudioPane = 'gallery';
   editingDraftIdInput.value = '';
   collectionManager.hidden = true;
+  syncCollectionStudioPane();
   applyBuilderVisibility();
   refreshRecentCollections();
   setStatus('Collection closed. Local drafts stay saved. No transaction was sent.');
+  void refreshYourCollections();
 }
 
 async function adoptDraftsForActiveCollection(): Promise<void> {
@@ -619,6 +720,7 @@ function syncBuilderNav(): void {
 }
 
 function applyBuilderVisibility(): void {
+  appShell.classList.toggle('is-home', builderMode === 'home');
   nftForm.hidden = builderMode !== 'nft';
   collectionForm.hidden = builderMode !== 'create-collection';
   if (builderMode === 'manage-collection') {
@@ -862,12 +964,15 @@ function setBuilderMode(mode: BuilderMode): void {
   builderMode = mode;
   syncBuilderNav();
   resultPanel.hidden = true;
+  if (mode !== 'manage-collection') {
+    collectionStudioPane = 'gallery';
+  }
   if (mode === 'manage-collection' && activeCollection) {
     void showCollectionManager({ fetchOnChain: false });
     return;
   }
   applyBuilderVisibility();
-  refreshRecentCollections();
+  refreshManageCollectionLists();
   if (mode === 'create-collection') {
     updateCollectionPreview();
   } else if (mode === 'nft') {
@@ -922,14 +1027,69 @@ function updateCollectionPreview(metadataUri?: string): void {
   });
 }
 
-function refreshRecentCollections(): void {
-  const collections = loadRecentCollections(getSelectedNetwork());
-  recentCollectionsList.innerHTML = renderRecentCollectionsMarkup(collections);
-  recentCollectionsList.querySelectorAll<HTMLButtonElement>('[data-collection-mint]').forEach((button) => {
+function bindCollectionOpenButtons(container: HTMLElement): void {
+  container.querySelectorAll<HTMLButtonElement>('[data-collection-mint]').forEach((button) => {
     button.addEventListener('click', () => {
       void openCollection(button.dataset.collectionMint ?? '');
     });
   });
+}
+
+function refreshRecentCollections(): void {
+  const collections = loadRecentCollections(getSelectedNetwork());
+  recentCollectionsBlock.hidden = collections.length === 0;
+  recentCollectionsList.innerHTML = renderRecentCollectionsMarkup(collections);
+  bindCollectionOpenButtons(recentCollectionsList);
+}
+
+async function refreshYourCollections(): Promise<void> {
+  const seq = ++managedDiscoverySeq;
+
+  if (!connectedWalletAddress) {
+    yourCollectionsStatus.hidden = false;
+    yourCollectionsStatus.textContent = YOUR_COLLECTIONS_WALLET_DISCONNECTED;
+    yourCollectionsList.innerHTML = '';
+    return;
+  }
+
+  yourCollectionsStatus.hidden = false;
+  yourCollectionsStatus.textContent = 'Looking for collections you manage…';
+  yourCollectionsList.innerHTML = '';
+
+  const result = await discoverManagedCollections({
+    network: getSelectedNetwork(),
+    walletAddress: connectedWalletAddress,
+  });
+
+  if (seq !== managedDiscoverySeq) {
+    return;
+  }
+
+  if (!result.ok) {
+    yourCollectionsStatus.hidden = false;
+    yourCollectionsStatus.textContent = YOUR_COLLECTIONS_LOAD_FAILED;
+    yourCollectionsList.innerHTML = '';
+    return;
+  }
+
+  if (result.collections.length === 0) {
+    yourCollectionsStatus.hidden = false;
+    yourCollectionsStatus.textContent = YOUR_COLLECTIONS_NONE_FOUND;
+    yourCollectionsList.innerHTML = '';
+    return;
+  }
+
+  yourCollectionsStatus.hidden = true;
+  yourCollectionsStatus.textContent = '';
+  yourCollectionsList.innerHTML = renderManagedCollectionsMarkup(result.collections);
+  bindCollectionOpenButtons(yourCollectionsList);
+}
+
+function refreshManageCollectionLists(): void {
+  refreshRecentCollections();
+  if (builderMode === 'manage-collection' && !activeCollection) {
+    void refreshYourCollections();
+  }
 }
 
 function mintedNumbers(collection: CachedCollection): number[] {
@@ -961,7 +1121,18 @@ async function handleDraftAction(action: string, draftId: string, pending: boole
   const drafts = pending ? pendingDrafts : studioDrafts;
 
   if (action === 'edit') {
-    await openItemEditor(draftId, pending);
+    if (pending) {
+      await openItemEditor(draftId, true);
+      return;
+    }
+
+    const draft = studioDrafts.find((item) => item.id === draftId);
+    if (!draft) {
+      return;
+    }
+
+    await selectDraft(draft.id);
+    revealCollectionItemEditor(draft.name);
     return;
   }
 
@@ -1282,16 +1453,24 @@ async function renderCollectionManager(): Promise<void> {
     numberingBlocked: progress.numberingBlocked,
     discoveryError: progress.discoveryError,
   });
-  bindCollectionManagerActions();
   studioDraftList.innerHTML = renderManagerItemListMarkup(managerItems, {
     digitCount: numbering.digitCount,
     network: activeCollection.network,
     numberingBlocked: progress.numberingBlocked,
   });
+  const addNftDraftButton = requireElement<HTMLButtonElement>('#addNftDraftButton');
+  studioDraftList.appendChild(addNftDraftButton);
+  const studioTech = collectionManagerSummary.querySelector('.studio-tech');
+  const studioAdvanced = collectionManager.querySelector('.studio-advanced');
+  const advancedSummary = studioAdvanced?.querySelector('summary');
+  if (studioTech && advancedSummary) {
+    advancedSummary.insertAdjacentElement('afterend', studioTech);
+  }
+  bindCollectionManagerActions();
   bindDraftListActions(studioDraftList, false);
   collectionNextNumber.textContent = progress.numberingBlocked
     ? COLLECTION_ITEM_DISCOVERY_FAILURE_MESSAGE
-    : `Next available number: ${nextLabel}. Drafts are local. On-chain items stay on-chain.`;
+    : `Next available number: ${nextLabel}`;
 
   if (!selectedDraftId && nextNumber) {
     requireElement<HTMLInputElement>('#collectionItemName').value = buildCollectionItemName(
@@ -1318,6 +1497,11 @@ async function renderCollectionManager(): Promise<void> {
 
   addExistingNftButton.disabled = true;
   pendingExistingNftMint = null;
+  syncCollectionStudioPane(
+    selectedDraftId
+      ? studioDrafts.find((draft) => draft.id === selectedDraftId)?.name
+      : undefined
+  );
 }
 
 async function openCollection(mintAddress: string): Promise<void> {
@@ -1377,6 +1561,8 @@ async function openCollection(mintAddress: string): Promise<void> {
     rememberOpenedCollection(activeCollection);
     await persistStudioSnapshot();
     refreshRecentCollections();
+    collectionStudioPane = 'gallery';
+    selectedDraftId = null;
     await showCollectionManager({ fetchOnChain: false });
     setError(
       'Could not fetch this collection on-chain. Showing saved local progress. Minting is blocked until the collection is confirmed on this network.'
@@ -1396,8 +1582,7 @@ async function openCollection(mintAddress: string): Promise<void> {
     name: onChain.name,
     symbol: onChain.symbol,
     plannedMaxItems: DEFAULT_PLANNED_CAPACITY,
-    itemNamePrefix:
-      itemPrefixFromCollectionName(onChain.name) || DEFAULT_COLLECTION_ITEM_PREFIX,
+    itemNamePrefix: itemPrefixFromCollectionName(onChain.name),
     digitCount: DEFAULT_DIGIT_COUNT,
     startNumber: DEFAULT_START_NUMBER,
     commonDescription: '',
@@ -1429,6 +1614,8 @@ async function openCollection(mintAddress: string): Promise<void> {
   rememberOpenedCollection(activeCollection);
   await persistStudioSnapshot();
   refreshRecentCollections();
+  collectionStudioPane = 'gallery';
+  selectedDraftId = null;
   await showCollectionManager({ fetchOnChain: true });
   setStatus(
     `Opened ${activeCollection.name} on ${network === 'mainnet' ? 'Mainnet' : 'Devnet'}. No new collection was created.`
@@ -1468,8 +1655,10 @@ async function addNftDraftToActiveCollection(): Promise<void> {
   await persistDraft(created);
   selectedDraftId = created.id;
   editingDraftIdInput.value = created.id;
+  collectionStudioPane = 'item-editor';
   await persistStudioSnapshot();
   await renderCollectionManager();
+  revealCollectionItemEditor(created.name);
   setStatus(
     `Added ${created.name} as a local draft. This did not create a collection NFT.`
   );
@@ -1489,7 +1678,6 @@ function bindMintResultActions(model: MintDisplayModel): void {
     nftForm.reset();
     mutableCheckbox.checked = true;
     attributeRows.innerHTML = '';
-    addAttributeRow();
     resultPanel.hidden = true;
     resultPanel.innerHTML = '';
     if (artworkObjectUrl) {
@@ -1702,6 +1890,7 @@ connectButton.addEventListener('click', async () => {
   try {
     await connectSelectedWallet(false);
     updatePreview();
+    refreshManageCollectionLists();
     setStatus('Wallet connected.');
   } catch (error) {
     console.error(error);
@@ -1713,6 +1902,7 @@ connectButton.addEventListener('click', async () => {
 disconnectButton.addEventListener('click', async () => {
   await disconnectWallet();
   updatePreview();
+  refreshManageCollectionLists();
   setStatus('Wallet disconnected.');
 });
 
@@ -1725,7 +1915,7 @@ networkSelect.addEventListener('change', () => {
   updateMainnetWarning();
   updatePreview();
   updateCollectionPreview();
-  refreshRecentCollections();
+  refreshManageCollectionLists();
   if (
     activeCollection &&
     activeCollection.network !== getSelectedNetwork()
@@ -1787,6 +1977,10 @@ document.querySelectorAll<HTMLButtonElement>('[data-asset-type]').forEach((butto
       setBuilderMode(mode);
     }
   });
+});
+
+homeBrandButton.addEventListener('click', () => {
+  setBuilderMode('home');
 });
 
 collectionArtworkInput.addEventListener('change', () => {
@@ -1981,6 +2175,10 @@ collectionItemArtworkInput.addEventListener('change', () => {
 
 saveDraftButton.addEventListener('click', () => {
   void saveCurrentItemDraft();
+});
+
+backToCollectionButton.addEventListener('click', () => {
+  returnToCollectionGallery();
 });
 
 itemEditorAddAttribute.addEventListener('click', () => {
@@ -2362,19 +2560,27 @@ async function mintCollectionDraftById(draftId: string): Promise<void> {
       itemNumberLabel: formatStudioItemNumber(prepared.number, numbering.digitCount),
       showIndexingNotice: minted.showIndexingNotice,
     });
+    selectedDraftId = null;
+    editingDraftIdInput.value = '';
+    collectionStudioPane = 'gallery';
     await renderCollectionManager();
     setStatus(`${prepared.name} minted in this collection. ${shortAddress(minted.mintAddress)}`);
     showActionPopup('NFT created', `${prepared.name} was minted.`, 'success');
     hideActionPopup(1600);
   } catch (error) {
     console.error(error);
-    const message = mapErrorToUserMessage(error);
     const latest =
       (workingDraft
         ? (await studioStore.getDrafts(activeCollectionKey() ?? '')).find(
             (item) => item.id === workingDraft?.id
           )
         : null) ?? workingDraft;
+    const mintTransactionSubmitted =
+      Boolean(chainMintAddress) ||
+      latest?.status === 'mint_submitted' ||
+      latest?.status === 'minted' ||
+      latest?.status === 'collection_verified';
+    const message = mapErrorToUserMessage(error, { mintTransactionSubmitted });
 
     if (chainMintAddress && latest) {
       await persistDraft(
@@ -2582,33 +2788,24 @@ async function tryTrustedAutoReconnect(): Promise<void> {
     connectedWalletAddress = address;
     updateWalletBox();
     updatePreview();
+    refreshManageCollectionLists();
   } catch {
     clearWalletState();
   }
 }
 
 function startPage(): void {
+  applyDeveloperNetworkControls();
   syncBuilderNav();
   applyBuilderVisibility();
   refreshWalletSelector();
+  updateWalletBox();
   updateNetworkStatus();
   updateMainnetWarning();
 
-  if (attributeRows.childElementCount === 0) {
-    addAttributeRow();
-  }
-
-  if (collectionDefaultAttributeRows.childElementCount === 0) {
-    addAttributeRowTo(collectionDefaultAttributeRows, '', '', updateCollectionPreview);
-  }
-
-  if (collectionItemAttributeRows.childElementCount === 0) {
-    addAttributeRowTo(collectionItemAttributeRows);
-  }
-
   updatePreview();
   updateCollectionPreview();
-  refreshRecentCollections();
+  refreshManageCollectionLists();
   void loadPendingDrafts();
   void tryTrustedAutoReconnect();
 }

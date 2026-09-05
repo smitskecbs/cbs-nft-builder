@@ -75,6 +75,10 @@ export type DasAssetLike = {
     group_value?: unknown;
     verified?: unknown;
   }>;
+  authorities?: Array<{
+    address?: unknown;
+    scopes?: unknown;
+  }>;
   token_info?: { token_standard?: unknown };
   burnt?: unknown;
 };

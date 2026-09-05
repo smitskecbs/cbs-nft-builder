@@ -19,6 +19,10 @@ import { managerHasMintAll } from '../studio/itemMint';
 import { renderCollectionManagerMarkup, renderManagerItemListMarkup } from '../ui/collectionViews';
 import { studioCapacityView } from '../studio/capacity';
 
+function mangoNumbering() {
+  return defaultStudioNumbering({ baseName: 'ManGo Pixel' });
+}
+
 const COLLECTION = '3M6W1vgH7c7gNdh7moLcN3HTcCffBn8ohVrx9aZFRGG2';
 
 function dasNft(params: {
@@ -191,7 +195,7 @@ describe('on-chain collection item discovery', () => {
     const created = addItemDraftToExistingCollection({
       collection: collectionCache(),
       existingDrafts: [],
-      numbering: defaultStudioNumbering(),
+      numbering: mangoNumbering(),
       defaults: defaultStudioDefaults({ symbol: 'MANGO' }),
       discovery,
     });
@@ -219,7 +223,7 @@ describe('on-chain collection item discovery', () => {
     const fifth = addItemDraftToExistingCollection({
       collection: collectionCache(),
       existingDrafts: [],
-      numbering: defaultStudioNumbering(),
+      numbering: mangoNumbering(),
       defaults: defaultStudioDefaults(),
       discovery,
     });
@@ -231,7 +235,7 @@ describe('on-chain collection item discovery', () => {
     const sixth = addItemDraftToExistingCollection({
       collection: collectionCache(),
       existingDrafts: [fifth],
-      numbering: defaultStudioNumbering(),
+      numbering: mangoNumbering(),
       defaults: defaultStudioDefaults(),
       discovery,
     });
@@ -285,7 +289,7 @@ describe('on-chain collection item discovery', () => {
     const created = addItemDraftToExistingCollection({
       collection: collectionCache(),
       existingDrafts: [],
-      numbering: defaultStudioNumbering(),
+      numbering: mangoNumbering(),
       defaults: defaultStudioDefaults(),
       discovery: {
         ok: false,
@@ -379,7 +383,11 @@ describe('on-chain collection item discovery', () => {
     expect(html).toContain('ManGo Pixel #004');
     expect(html).toContain('Verified');
     expect(html).toContain('Minted');
+    expect(html).toContain('class="nft-card');
+    expect(html).toContain('nft-card-art');
+    expect(html).toContain('>View<');
     expect(html).not.toContain('>Edit<');
+    expect(html).not.toContain('data-draft-action="mint"');
     expect(managerHasMintAll(html)).toBe(false);
     expect(html.toLowerCase()).not.toContain('mint all');
     expect(html).not.toContain('signature');

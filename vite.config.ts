@@ -11,6 +11,10 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: '/',
+    server: {
+      port: 5173,
+      strictPort: true,
+    },
     plugins: [
       {
         name: 'cbs-pinata-upload-api',
@@ -23,11 +27,21 @@ export default defineConfig(({ mode }) => {
               return;
             }
 
-            const { default: handler } = await import(
-              './api/upload-to-pinata.js'
-            );
+            try {
+              const { default: handler } = await import(
+                './api/upload-to-pinata.js'
+              );
 
-            await handler(req, res);
+              await handler(req, res);
+            } catch {
+              if (res.writableEnded) {
+                return;
+              }
+
+              res.statusCode = 500;
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.end(JSON.stringify({ error: 'Pinata upload failed.' }));
+            }
           });
         },
       },

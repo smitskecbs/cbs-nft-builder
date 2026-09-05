@@ -1,12 +1,15 @@
 import type { SolanaNetwork } from '../solana/config';
 import type { NftAttribute } from '../validation/attributes';
 import {
+  AUTO_OPEN_LAST_COLLECTION,
   DEFAULT_DIGIT_COUNT,
   DEFAULT_PLANNED_CAPACITY,
   DEFAULT_START_NUMBER,
   LAST_OPENED_COLLECTION_STORAGE_PREFIX,
   RECENT_COLLECTIONS_STORAGE_PREFIX,
 } from './constants';
+
+export { AUTO_OPEN_LAST_COLLECTION };
 
 export type CachedCollectionItem = {
   mint: string;

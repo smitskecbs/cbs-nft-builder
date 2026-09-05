@@ -7,6 +7,7 @@ import {
 } from '../solana/wallets';
 import { toIpfsUri, toPinataGatewayUrl } from '../metadata/buildNftMetadata';
 import type { NftJsonMetadata } from '../metadata/buildNftMetadata';
+import { LOCAL_UPLOAD_SERVICE_UNAVAILABLE_MESSAGE } from '../validation/errors';
 import {
   buildPinataUploadAuthMessage,
   UPLOAD_AUTH_EXPIRY_SECONDS,
@@ -96,19 +97,47 @@ export async function requestPinataUploadAuthorization(
   }
 }
 
+function isUploadServerUnavailableError(error: unknown): boolean {
+  if (error instanceof TypeError) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const lower = message.toLowerCase();
+
+  return (
+    lower.includes('failed to fetch') ||
+    lower.includes('networkerror') ||
+    lower.includes('err_connection_reset') ||
+    lower.includes('econnreset') ||
+    lower.includes('econnrefused') ||
+    lower.includes('load failed')
+  );
+}
+
 async function uploadFormDataToPinata(
   formData: FormData,
   auth: PinataUploadAuth
 ): Promise<{ IpfsHash: string }> {
-  const response = await fetch(PINATA_UPLOAD_API, {
-    method: 'POST',
-    headers: {
-      'x-wallet-address': auth.walletAddress,
-      'x-upload-message': encodeUploadAuthMessageForHeader(auth.message),
-      'x-upload-signature': auth.signature,
-    },
-    body: formData,
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(PINATA_UPLOAD_API, {
+      method: 'POST',
+      headers: {
+        'x-wallet-address': auth.walletAddress,
+        'x-upload-message': encodeUploadAuthMessageForHeader(auth.message),
+        'x-upload-signature': auth.signature,
+      },
+      body: formData,
+    });
+  } catch (error) {
+    if (isUploadServerUnavailableError(error)) {
+      throw new Error(LOCAL_UPLOAD_SERVICE_UNAVAILABLE_MESSAGE);
+    }
+
+    throw error;
+  }
 
   if (!response.ok) {
     let errorMessage = 'Pinata upload failed.';

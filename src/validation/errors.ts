@@ -1,7 +1,34 @@
-export function mapErrorToUserMessage(error: unknown): string {
+export const LOCAL_UPLOAD_SERVICE_UNAVAILABLE_MESSAGE =
+  'Artwork upload failed because the local upload service became unavailable. Please restart the NFT Builder and try again.';
+
+export const LOCAL_UPLOAD_SERVICE_UNAVAILABLE_BEFORE_MINT_MESSAGE =
+  'Artwork upload failed because the local upload service became unavailable. Nothing was minted. Please restart the NFT Builder and try again.';
+
+export function isLocalUploadServiceUnavailableError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : String(error ?? '');
+  const lower = message.toLowerCase();
+
+  return (
+    message === LOCAL_UPLOAD_SERVICE_UNAVAILABLE_MESSAGE ||
+    message === LOCAL_UPLOAD_SERVICE_UNAVAILABLE_BEFORE_MINT_MESSAGE ||
+    lower.includes('local upload service became unavailable')
+  );
+}
+
+export function mapErrorToUserMessage(
+  error: unknown,
+  options: { mintTransactionSubmitted?: boolean } = {}
+): string {
   const message =
     error instanceof Error ? error.message : String(error ?? 'Unknown error');
   const lower = message.toLowerCase();
+
+  if (isLocalUploadServiceUnavailableError(error)) {
+    return options.mintTransactionSubmitted
+      ? LOCAL_UPLOAD_SERVICE_UNAVAILABLE_MESSAGE
+      : LOCAL_UPLOAD_SERVICE_UNAVAILABLE_BEFORE_MINT_MESSAGE;
+  }
 
   if (
     lower.includes('user rejected') ||

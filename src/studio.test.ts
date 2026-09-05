@@ -41,6 +41,10 @@ import {
   renderNumberingPreviewMarkup,
 } from './ui/collectionViews';
 
+function mangoNumbering() {
+  return defaultStudioNumbering({ baseName: 'ManGo Pixel' });
+}
+
 function artwork(name: string, index: number) {
   return {
     name,
@@ -50,8 +54,20 @@ function artwork(name: string, index: number) {
 }
 
 describe('studio numbering', () => {
-  it('previews ManGo Pixel #001 through planned #100', () => {
+  it('uses a generic Item prefix until a collection supplies one', () => {
     const numbering = defaultStudioNumbering();
+    expect(numbering.baseName).toBe('Item');
+    expect(buildStudioItemName(numbering, 1)).toBe('Item #001');
+    expect(previewStudioNames(numbering)).toEqual([
+      'Item #001',
+      'Item #002',
+      'Item #003',
+      'Item #100',
+    ]);
+  });
+
+  it('previews ManGo Pixel #001 through planned #100 when that prefix is supplied', () => {
+    const numbering = defaultStudioNumbering({ baseName: 'ManGo Pixel' });
     expect(buildStudioItemName(numbering, 1)).toBe('ManGo Pixel #001');
     expect(previewStudioNames(numbering)).toEqual([
       'ManGo Pixel #001',
@@ -96,7 +112,7 @@ function makeDraft(
 
 describe('studio drafts', () => {
   it('imports multiple images as drafts without counting them as minted', () => {
-    const numbering = defaultStudioNumbering();
+    const numbering = mangoNumbering();
     const imported = importFilesAsDrafts({
       files: Array.from({ length: 8 }, (_, index) => artwork(`pixel-${index + 8}.png`, index)),
       mintedNumbers: [1],
@@ -479,12 +495,17 @@ describe('studio markup honesty', () => {
     expect(html).toContain('CBS planned');
     expect(html).toContain('Collection created ✓');
     expect(html).toContain('ManGo Pixel Collection');
+    expect(html).toContain('ManGo Pixel #008');
+    expect(html).toContain('id="copyCollectionMint"');
+    expect(html).toContain('Copy');
+    expect(html).toContain('Explorer');
     expect(html).toContain('100');
-    expect(html).toContain('+ Add NFT');
+    expect(html).toContain('Create next NFT');
+    expect(html).toContain('Drafts are local. On-chain items stay on-chain.');
     expect(html).toContain('Prepared');
     expect(html).toContain('Verified in collection');
     expect(html).toContain('collection cover is a separate NFT');
-    expect(renderNumberingPreviewMarkup(defaultStudioNumbering())).toContain('ManGo Pixel #001');
+    expect(renderNumberingPreviewMarkup(mangoNumbering())).toContain('ManGo Pixel #001');
     expect(renderDraftListMarkup([])).toContain('No prepared drafts yet');
     expect(renderDraftListMarkup([
       makeDraft({

@@ -25,7 +25,7 @@ export function defaultStudioNumbering(
   overrides: Partial<StudioNumbering> = {}
 ): StudioNumbering {
   return {
-    baseName: 'ManGo Pixel',
+    baseName: 'Item',
     digitCount: DEFAULT_DIGIT_COUNT,
     start: DEFAULT_START_NUMBER,
     plannedCapacity: DEFAULT_PLANNED_CAPACITY,

@@ -14,12 +14,14 @@ export const COLLECTION_MODEL_LABEL = 'Metaplex Token Metadata';
 
 export const COLLECTION_NFT_STANDARD = 'NonFungible' as const;
 
-export const DEFAULT_COLLECTION_NAME = 'ManGo Pixel Collection';
-export const DEFAULT_COLLECTION_SYMBOL = 'MANGO';
-export const DEFAULT_COLLECTION_DESCRIPTION =
-  'A collection of unique ManGo Pixel NFTs created on Solana.';
-export const DEFAULT_COLLECTION_EXTERNAL_URL = 'https://mangomeme.fun';
-export const DEFAULT_COLLECTION_ITEM_PREFIX = 'ManGo Pixel';
+export const DEFAULT_COLLECTION_NAME = '';
+export const DEFAULT_COLLECTION_SYMBOL = '';
+export const DEFAULT_COLLECTION_DESCRIPTION = '';
+export const DEFAULT_COLLECTION_EXTERNAL_URL = '';
+export const DEFAULT_COLLECTION_ITEM_PREFIX = '';
+
+/** Last-opened mint is a convenience pointer only. Never auto-open or prefill from it. */
+export const AUTO_OPEN_LAST_COLLECTION = false;
 
 export const RECENT_COLLECTIONS_STORAGE_PREFIX =
   'cbs-nft-builder.recent-collections.v1';
