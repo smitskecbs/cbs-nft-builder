@@ -146,10 +146,12 @@ import {
   cachedItemsFromDiscovered,
   collectionFromSnapshot,
   collectionProgress,
+  draftRecoveryChanged,
   emptyCollectionDiscovery,
   mergeManagerListItems,
   mintedNumbersFromRecords,
   nextNumberForExistingCollection,
+  recoverDraftsAgainstDiscoveredItems,
   refuseCollectionOpenOnWrongNetwork,
   snapshotFromCollection,
   usedNumbersForContinue,
@@ -1435,6 +1437,16 @@ async function renderCollectionManager(): Promise<void> {
   }
 
   await loadStudioDraftsForActiveCollection();
+  if (lastItemDiscovery?.ok) {
+    const recovered = recoverDraftsAgainstDiscoveredItems(studioDrafts, lastItemDiscovery.items);
+    const changed = recovered.filter((draft, index) =>
+      draftRecoveryChanged(studioDrafts[index], draft)
+    );
+    if (changed.length > 0) {
+      studioDrafts = recovered;
+      await persistDraftList(changed);
+    }
+  }
   await loadStudioPreviewUrls(studioDrafts);
   const numbering = numberingFromCollection(activeCollection);
   const discovered = lastItemDiscovery?.ok ? lastItemDiscovery.items : [];
@@ -1466,6 +1478,7 @@ async function renderCollectionManager(): Promise<void> {
     discovered,
     drafts: studioDrafts,
     artworkPreviewUrls: studioDraftPreviewUrls,
+    discoveryOk: lastItemDiscovery?.ok === true,
   });
 
   collectionManager.hidden = false;

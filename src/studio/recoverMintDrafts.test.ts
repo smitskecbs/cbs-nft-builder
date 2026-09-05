@@ -11,6 +11,7 @@ import { collectionStudioKey, createMemoryStudioStore } from './persistence';
 import {
   addItemDraftToExistingCollection,
   mergeManagerListItems,
+  recoverDraftAgainstDiscoveredItems,
 } from './resume';
 import {
   hasOnChainMintProof,
@@ -384,5 +385,237 @@ describe('recover unproven local mint drafts', () => {
     expect(html).toContain('data-draft-action="edit"');
     expect(html).toContain('Mint #023');
     expect(canMintStudioDraft(prepared023)).toBe(true);
+  });
+});
+
+/**
+ * Live Collection Manager fingerprint for the real #020 record:
+ * Local draft + Minted + View, and no Edit after the empty-proof recovery.
+ * That combination requires a locked status plus a non-empty local mintAddress
+ * that is not present in DAS collection items.
+ */
+const PERSISTED_USER_020 = {
+  id: 'draft_lz8k2_mango020',
+  collectionKey: `mainnet:${COLLECTION}`,
+  network: 'mainnet' as const,
+  collectionMint: COLLECTION,
+  number: 20,
+  name: 'ManGo Pixel #020',
+  status: 'collection_verified' as const,
+  overrides: {
+    description: 'A unique ManGo Pixel from the original series.',
+    attributes: [
+      { trait_type: 'Series', value: 'ManGo' },
+      { trait_type: 'Type', value: 'Pixel' },
+    ],
+  },
+  artwork: { name: '020.png', type: 'image/png', size: 184320 },
+  mintAddress: '7kStale020MintNotOnMainnet111111111111111',
+  mintSignature:
+    '5Stale020TxSig111111111111111111111111111111111111111111111111111111111111111111111111111',
+  sortIndex: 20,
+  createdAt: 1712345678000,
+  updatedAt: 1712345678000,
+};
+
+const ON_CHAIN_021 = 'ADDgMXLtvcxtYavJtqTsNCDv1hd83Fy2px3oyMBGPaPf';
+const ON_CHAIN_022 = 'H22uJsXrb1vpMe2hXTqvEXFuUaEretNejph29TVESuyz';
+const ON_CHAIN_024 = 'Completed024MintOnMainnet1111111111111111';
+
+function discoveryWith024() {
+  return {
+    ok: true as const,
+    items: [
+      ...discovery().items,
+      discovered('ManGo Pixel #024', ON_CHAIN_024, 24),
+    ],
+    method: COLLECTION_ITEM_DISCOVERY_METHOD,
+    readOnly: true as const,
+    network: 'mainnet' as const,
+  };
+}
+
+describe('recover stale local mint proof against collection discovery', () => {
+  it('load-time normalization keeps the exact #020 persisted shape locked', () => {
+    const loaded = normalizeStudioDraft(PERSISTED_USER_020);
+
+    expect(loaded.status).toBe('collection_verified');
+    expect(loaded.mintAddress).toBe(PERSISTED_USER_020.mintAddress);
+    expect(loaded.mintSignature).toBe(PERSISTED_USER_020.mintSignature);
+    expect(hasOnChainMintProof(loaded)).toBe(true);
+    expect(canMintStudioDraft(loaded)).toBe(false);
+
+    const html = renderManagerItemListMarkup(
+      mergeManagerListItems({
+        discovered: discovery().items,
+        drafts: [loaded],
+      }),
+      { digitCount: 3, network: 'mainnet' }
+    );
+
+    expect(html).toContain('ManGo Pixel #020');
+    expect(html).toContain('Local draft');
+    expect(html).toContain('Minted');
+    expect(html).toContain('>View<');
+    expect(html).not.toContain('data-draft-action="edit"');
+    expect(html).not.toContain('Mint #020');
+  });
+
+  it('DAS-corroborated recovery makes the exact #020 record editable and mintable', () => {
+    const loaded = normalizeStudioDraft(PERSISTED_USER_020);
+    const recovered = recoverDraftAgainstDiscoveredItems(loaded, discovery().items, 42);
+
+    expect(recovered.id).toBe(PERSISTED_USER_020.id);
+    expect(recovered.status).toBe('failed');
+    expect(recovered.mintAddress).toBeNull();
+    expect(recovered.mintSignature).toBeNull();
+    expect(recovered.staleMintAddress).toBe(PERSISTED_USER_020.mintAddress);
+    expect(recovered.staleMintSignature).toBe(PERSISTED_USER_020.mintSignature);
+    expect(recovered.name).toBe('ManGo Pixel #020');
+    expect(recovered.number).toBe(20);
+    expect(recovered.overrides.description).toBe(PERSISTED_USER_020.overrides.description);
+    expect(recovered.overrides.attributes).toEqual(PERSISTED_USER_020.overrides.attributes);
+    expect(recovered.artwork).toEqual(PERSISTED_USER_020.artwork);
+    expect(hasOnChainMintProof(recovered)).toBe(false);
+    expect(canMintStudioDraft(recovered)).toBe(true);
+
+    const rows = mergeManagerListItems({
+      discovered: discovery().items,
+      drafts: [loaded],
+      discoveryOk: true,
+    });
+    const html = renderManagerItemListMarkup(rows, { digitCount: 3, network: 'mainnet' });
+    const recoveredRow = rows.find((row) => row.name === 'ManGo Pixel #020');
+
+    expect(recoveredRow?.kind).toBe('local-draft');
+    expect(recoveredRow?.minted).toBe(false);
+    expect(recoveredRow?.collectionVerified).not.toBe(true);
+    expect(recoveredRow?.mintAddress).toBeNull();
+    expect(html).toContain('Local draft');
+    expect(html).toContain('Failed');
+    expect(html).toContain('data-draft-action="edit"');
+    expect(html).toContain('Mint #020');
+    expect(rows.filter((row) => row.name === 'ManGo Pixel #020')).toHaveLength(1);
+  });
+
+  it('does not unlock #020 when collection discovery failed', () => {
+    const loaded = normalizeStudioDraft(PERSISTED_USER_020);
+    const html = renderManagerItemListMarkup(
+      mergeManagerListItems({
+        discovered: [],
+        drafts: [loaded],
+        discoveryOk: false,
+      }),
+      { digitCount: 3, network: 'mainnet' }
+    );
+
+    expect(loaded.status).toBe('collection_verified');
+    expect(canMintStudioDraft(loaded)).toBe(false);
+    expect(html).toContain('>View<');
+    expect(html).not.toContain('data-draft-action="edit"');
+    expect(html).not.toContain('Mint #020');
+  });
+
+  it('does not remint #020 if DAS actually has an on-chain #020', () => {
+    const loaded = normalizeStudioDraft(PERSISTED_USER_020);
+    const items = [
+      ...discovery().items,
+      discovered('ManGo Pixel #020', 'Real020OnChainMint11111111111111111111111', 20),
+    ];
+    const recovered = recoverDraftAgainstDiscoveredItems(loaded, items, 42);
+    const rows = mergeManagerListItems({
+      discovered: items,
+      drafts: [loaded],
+      discoveryOk: true,
+    });
+    const html = renderManagerItemListMarkup(rows, { digitCount: 3, network: 'mainnet' });
+
+    expect(recovered.status).toBe('collection_verified');
+    expect(recovered.mintAddress).toBe(PERSISTED_USER_020.mintAddress);
+    expect(rows.filter((row) => row.name === 'ManGo Pixel #020')).toHaveLength(1);
+    expect(rows.find((row) => row.name === 'ManGo Pixel #020')?.kind).toBe('on-chain');
+    expect(html).toContain('On-chain item');
+    expect(html).toContain('>View<');
+    expect(html).not.toContain('data-draft-action="edit"');
+    expect(html).not.toContain('Mint #020');
+  });
+
+  it('keeps #021 #022 and completed #024 as on-chain View-only', () => {
+    const loaded = normalizeStudioDraft(PERSISTED_USER_020);
+    const rows = mergeManagerListItems({
+      discovered: discoveryWith024().items,
+      drafts: [loaded],
+      discoveryOk: true,
+    });
+    const html = renderManagerItemListMarkup(rows, { digitCount: 3, network: 'mainnet' });
+    const onChain = rows.filter((row) => row.kind === 'on-chain');
+
+    expect(onChain.map((row) => row.mintAddress)).toContain(ON_CHAIN_021);
+    expect(onChain.map((row) => row.mintAddress)).toContain(ON_CHAIN_022);
+    expect(onChain.map((row) => row.mintAddress)).toContain(ON_CHAIN_024);
+    expect(onChain.every((row) => row.minted)).toBe(true);
+    expect(html).toContain('ManGo Pixel #021');
+    expect(html).toContain('ManGo Pixel #022');
+    expect(html).toContain('ManGo Pixel #024');
+    expect(html).toContain('On-chain item');
+    expect(rows.find((row) => row.name === 'ManGo Pixel #020')?.kind).toBe('local-draft');
+    expect(rows.find((row) => row.name === 'ManGo Pixel #020')?.draft?.status).toBe('failed');
+  });
+
+  it('does not create a second #020 after recovering the persisted record', () => {
+    const recovered = recoverDraftAgainstDiscoveredItems(
+      normalizeStudioDraft(PERSISTED_USER_020),
+      discovery().items,
+      42
+    );
+    const created = addItemDraftToExistingCollection({
+      collection: collectionCache(),
+      existingDrafts: [recovered],
+      numbering: defaultStudioNumbering({ baseName: 'ManGo Pixel' }),
+      defaults: defaultStudioDefaults({ symbol: 'MANGO' }),
+      discovery: discovery(),
+    });
+
+    expect('error' in created).toBe(false);
+    if ('error' in created) {
+      return;
+    }
+
+    expect(created.number).not.toBe(20);
+    expect(created.name).not.toBe('ManGo Pixel #020');
+    expect(created.id).not.toBe(PERSISTED_USER_020.id);
+  });
+
+  it('maps legacy nested mintResult proof the same way as mintAddress', () => {
+    const loaded = normalizeStudioDraft({
+      ...PERSISTED_USER_020,
+      mintAddress: null,
+      mintSignature: null,
+      mintResult: {
+        mintAddress: PERSISTED_USER_020.mintAddress,
+        signature: PERSISTED_USER_020.mintSignature,
+      },
+    });
+
+    expect(loaded.mintAddress).toBe(PERSISTED_USER_020.mintAddress);
+    expect(loaded.mintSignature).toBe(PERSISTED_USER_020.mintSignature);
+    expect(loaded.status).toBe('collection_verified');
+
+    const recovered = recoverDraftAgainstDiscoveredItems(loaded, discovery().items, 42);
+    expect(recovered.status).toBe('failed');
+    expect(recovered.mintAddress).toBeNull();
+    expect(canMintStudioDraft(recovered)).toBe(true);
+  });
+
+  it('keeps a minted status + stale mintAddress variant retryable after DAS check', () => {
+    const loaded = normalizeStudioDraft({
+      ...PERSISTED_USER_020,
+      status: 'minted',
+    });
+    const recovered = recoverDraftAgainstDiscoveredItems(loaded, discovery().items, 42);
+
+    expect(loaded.status).toBe('minted');
+    expect(recovered.status).toBe('failed');
+    expect(canMintStudioDraft(recovered)).toBe(true);
   });
 });

@@ -15,7 +15,7 @@ import {
 } from './numbering';
 import { collectionStudioKey } from './persistence';
 import type { StudioDefaults, StudioDraft, StudioSettings } from './types';
-import { isPreparedDraft, hasOnChainMintProof } from './types';
+import { isNumberLocked, isPreparedDraft, hasOnChainMintProof } from './types';
 
 export function networkDisplayName(network: SolanaNetwork): 'Mainnet' | 'Devnet' {
   return network === 'mainnet' ? 'Mainnet' : 'Devnet';
@@ -162,8 +162,7 @@ export function collectionProgress(params: {
   }
 
   for (const draft of params.drafts) {
-    if (draft.mintAddress) {
-      mintedMints.add(draft.mintAddress);
+    if (draft.mintAddress && mintedMints.has(draft.mintAddress)) {
       if (draft.status === 'collection_verified') {
         verifiedMints.add(draft.mintAddress);
       }
@@ -177,6 +176,98 @@ export function collectionProgress(params: {
     numberingBlocked: false,
     discoveryError: null,
   };
+}
+
+function namesMatch(left: string, right: string): boolean {
+  const a = left.trim().toLowerCase();
+  const b = right.trim().toLowerCase();
+  return Boolean(a) && a === b;
+}
+
+export function discoveredItemCorroboratesDraft(
+  draft: Pick<StudioDraft, 'mintAddress' | 'number' | 'name'>,
+  discovered: readonly DiscoveredCollectionItem[]
+): boolean {
+  const mint = draft.mintAddress?.trim() || null;
+
+  return discovered.some((item) => {
+    if (mint && item.mint === mint) {
+      return true;
+    }
+
+    if (item.number !== null && item.number === draft.number) {
+      return true;
+    }
+
+    return namesMatch(item.name, draft.name);
+  });
+}
+
+export function recoverDraftAgainstDiscoveredItems(
+  draft: StudioDraft,
+  discovered: readonly DiscoveredCollectionItem[],
+  now = Date.now()
+): StudioDraft {
+  if (discoveredItemCorroboratesDraft(draft, discovered)) {
+    return draft;
+  }
+
+  if (!hasOnChainMintProof(draft) && !isNumberLocked(draft.status)) {
+    return draft;
+  }
+
+  const staleMintAddress = draft.mintAddress ?? draft.staleMintAddress ?? null;
+  const staleMintSignature = draft.mintSignature ?? draft.staleMintSignature ?? null;
+
+  if (
+    draft.status === 'failed' &&
+    draft.mintAddress === null &&
+    (draft.mintSignature ?? null) === null &&
+    (draft.staleMintAddress ?? null) === (staleMintAddress ?? null) &&
+    (draft.staleMintSignature ?? null) === (staleMintSignature ?? null)
+  ) {
+    return draft;
+  }
+
+  return {
+    ...draft,
+    status: 'failed',
+    mintAddress: null,
+    mintSignature: null,
+    staleMintAddress,
+    staleMintSignature,
+    updatedAt: now,
+  };
+}
+
+export function recoverDraftsAgainstDiscoveredItems(
+  drafts: readonly StudioDraft[],
+  discovered: readonly DiscoveredCollectionItem[],
+  now = Date.now()
+): StudioDraft[] {
+  return drafts.map((draft) => recoverDraftAgainstDiscoveredItems(draft, discovered, now));
+}
+
+export function draftRecoveryChanged(before: StudioDraft, after: StudioDraft): boolean {
+  return (
+    before.status !== after.status ||
+    before.mintAddress !== after.mintAddress ||
+    (before.mintSignature ?? null) !== (after.mintSignature ?? null) ||
+    (before.staleMintAddress ?? null) !== (after.staleMintAddress ?? null) ||
+    (before.staleMintSignature ?? null) !== (after.staleMintSignature ?? null)
+  );
+}
+
+function draftRepresentedByDiscovered(
+  draft: StudioDraft,
+  listedMints: ReadonlySet<string>,
+  discovered: readonly DiscoveredCollectionItem[]
+): boolean {
+  if (draft.mintAddress && listedMints.has(draft.mintAddress)) {
+    return true;
+  }
+
+  return discoveredItemCorroboratesDraft(draft, discovered);
 }
 
 export function duplicateMintBlocked(draft: StudioDraft): { blocked: true; reason: string } | { blocked: false } {
@@ -289,9 +380,14 @@ export function mergeManagerListItems(params: {
   discovered: readonly DiscoveredCollectionItem[];
   drafts: readonly StudioDraft[];
   artworkPreviewUrls?: ReadonlyMap<string, string>;
+  discoveryOk?: boolean;
 }): ManagerListItem[] {
+  const drafts =
+    params.discoveryOk === true
+      ? recoverDraftsAgainstDiscoveredItems(params.drafts, params.discovered)
+      : params.drafts;
   const draftsByMint = new Map(
-    params.drafts
+    drafts
       .filter((draft) => draft.mintAddress)
       .map((draft) => [draft.mintAddress as string, draft])
   );
@@ -316,8 +412,8 @@ export function mergeManagerListItems(params: {
     });
   }
 
-  for (const draft of params.drafts) {
-    if (draft.mintAddress && listedMints.has(draft.mintAddress)) {
+  for (const draft of drafts) {
+    if (draftRepresentedByDiscovered(draft, listedMints, params.discovered)) {
       continue;
     }
 

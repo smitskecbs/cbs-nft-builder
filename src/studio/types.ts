@@ -65,6 +65,8 @@ export type StudioDraft = {
   artwork: StudioDraftArtwork | null;
   mintAddress: string | null;
   mintSignature?: string | null;
+  staleMintAddress?: string | null;
+  staleMintSignature?: string | null;
   sortIndex: number;
   createdAt: number;
   updatedAt: number;
@@ -76,6 +78,14 @@ type LegacyStudioDraftRecord = Partial<StudioDraft> & {
   nameOverride?: string;
   attributes?: NftAttribute[];
   attributesOverride?: NftAttribute[] | null;
+  signature?: string | null;
+  transactionSignature?: string | null;
+  mintResult?: {
+    mint?: string | null;
+    mintAddress?: string | null;
+    signature?: string | null;
+    transactionSignature?: string | null;
+  };
 };
 
 function optionalProofString(value: unknown): string | null {
@@ -136,8 +146,20 @@ export function normalizeStudioDraft(raw: unknown): StudioDraft {
     }
   }
 
-  const mintAddress = optionalProofString(record.mintAddress);
-  const mintSignature = optionalProofString(record.mintSignature);
+  const mintResult =
+    record.mintResult && typeof record.mintResult === 'object' ? record.mintResult : null;
+  const mintAddress =
+    optionalProofString(record.mintAddress) ??
+    optionalProofString(mintResult?.mintAddress) ??
+    optionalProofString(mintResult?.mint);
+  const mintSignature =
+    optionalProofString(record.mintSignature) ??
+    optionalProofString(record.signature) ??
+    optionalProofString(record.transactionSignature) ??
+    optionalProofString(mintResult?.signature) ??
+    optionalProofString(mintResult?.transactionSignature);
+  const staleMintAddress = optionalProofString(record.staleMintAddress);
+  const staleMintSignature = optionalProofString(record.staleMintSignature);
   const rawStatus = (record.status as DraftStatus) ?? 'draft';
 
   return {
@@ -152,6 +174,8 @@ export function normalizeStudioDraft(raw: unknown): StudioDraft {
     artwork: record.artwork ?? null,
     mintAddress,
     mintSignature,
+    staleMintAddress,
+    staleMintSignature,
     sortIndex: Number(record.sortIndex) || 0,
     createdAt: Number(record.createdAt) || 0,
     updatedAt: Number(record.updatedAt) || 0,
